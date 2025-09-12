@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.venv/
+
+# Log files
+logs/
+*.log
+
+# IDE / Editor specific files
+.vscode/
+.idea/
+
+# Sensible config - WICHTIG!
+# Wir werden eine Vorlage bereitstellen, aber die eigentliche config.py ignorieren.
+config.py
