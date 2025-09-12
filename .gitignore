@@ -16,5 +16,8 @@ logs/
 .idea/
 
 # Sensible config - WICHTIG!
-# Wir werden eine Vorlage bereitstellen, aber die eigentliche config.py ignorieren.
+# die eigentliche config.py ignorieren.
 config.py
+
+# Ignore Data directory - userdata and output files
+Daten/
