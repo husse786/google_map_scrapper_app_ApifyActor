@@ -21,3 +21,6 @@ config.py
 
 # Ignore Data directory - userdata and output files
 Daten/
+
+# macOS spfecific files
+.DS_Store
