@@ -26,7 +26,7 @@ class CSVProcessor:
                                            - Liste der gültigen Zeilen (als Dictionaries).
                                            - Liste der ungültigen Zeilen (als Dictionaries).
         """
-        required_columns = ['SearchString', 'PLZ']
+        required_columns = ['SearchString', 'PLZ', 'KundenNr']
         valid_rows = []
         invalid_rows = []
 

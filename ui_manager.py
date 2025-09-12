@@ -34,7 +34,7 @@ class AppUI:
 
         info_label = ttk.Label(
             top_frame,
-            text="CSV-Datei muss die Spalten 'SearchString' und 'PLZ' enthalten (Trennzeichen: ';')."
+            text="CSV-Datei muss Spalten enthalten: 'SearchString', 'PLZ' , 'KundenNr' (Trennzeichen: ';')."
         )
         info_label.pack(side=tk.LEFT, anchor="w")
 
