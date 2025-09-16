@@ -1,11 +1,11 @@
-#Google Maps Scraper GUI#
+# Google Maps Scraper GUI
 
 
-Dieses Projekt ist eine Desktop-Anwendung mit einer grafischen Benutzeroberfläche (GUI), um das Extrahieren von Unternehmensdaten aus Google Maps zu automatisieren. Die Anwendung nutzt die Apify-Plattform im Hintergrund, um gezielte und genaue Suchanfragen durchzuführen.
+Dieses Projekt ist eine Desktop-Anwendung mit einer Benutzeroberfläche (GUI), um das Extrahieren von Unternehmensdaten aus Google Maps zu automatisieren. Die Anwendung nutzt die Apify-Plattform im Hintergrund, um gezielte und genaue Suchanfragen durchzuführen.
 
 Ein Benutzer kann eine CSV-Datei mit Suchbegriffen und Postleitzahlen hochladen. Die Anwendung verarbeitet diese Datei, ruft für jeden validen Eintrag angereicherte Daten ab und stellt am Ende eine vollständige Ergebnis-Datei sowie eine Fehler-Datei bereit.
 
-##Architektur-Überblick##
+## Architektur-Überblick
 
 Die Anwendung folgt einem modularen Design, bei dem jede Datei eine klare Verantwortung hat:
 
@@ -24,40 +24,37 @@ Die Anwendung folgt einem modularen Design, bei dem jede Datei eine klare Verant
 - config.template.py: Eine Vorlage für die config.py, die sich im Repository befindet.
 
 
-##Features##
+## Features
 
-Einfache Bedienung: Intuitive grafische Oberfläche zum Hochladen von CSV-Dateien.
+- Einfache Bedienung: Intuitive grafische Oberfläche zum Hochladen von CSV-Dateien.
 
-Intelligente Datenvalidierung: Prüft hochgeladene Dateien automatisch auf das korrekte Format und trennt ungültige Einträge (z.B. ohne PLZ) ab.
+- Intelligente Datenvalidierung: Prüft hochgeladene Dateien automatisch auf das korrekte Format und trennt ungültige Einträge (z.B. ohne PLZ) ab.
 
-Präzise Suchen: Nutzt die Kombination aus Suchbegriff und Postleitzahl für genaue Abfragen an die Apify API.
+- Präzise Suchen: Nutzt die Kombination aus Suchbegriff und Postleitzahl für genaue Abfragen an die Apify API.
 
-Asynchrone Verarbeitung: Die Benutzeroberfläche bleibt dank Threading während der gesamten Verarbeitungszeit reaktionsfähig und friert nicht ein.
+- Asynchrone Verarbeitung: Die Benutzeroberfläche bleibt dank Threading während der gesamten Verarbeitungszeit reaktionsfähig und friert nicht ein.
 
-Echtzeit-Feedback: Ein integriertes Log-Fenster zeigt dem Benutzer jederzeit den aktuellen Status des Prozesses.
+- Echtzeit-Feedback: Ein integriertes Log-Fenster zeigt dem Benutzer jederzeit den aktuellen Status des Prozesses.
 
-Robustes Logging: Alle Aktionen werden parallel in eine app.log-Datei geschrieben, um eine einfache Fehlersuche zu ermöglichen.
+- Robustes Logging: Alle Aktionen werden parallel in eine app.log-Datei geschrieben, um eine einfache Fehlersuche zu ermöglichen.
 
-Strukturierte Ergebnisse: Erzeugt am Ende zwei saubere CSV-Dateien: angereicherte_daten.csv und fehlende_daten.csv.
+- Strukturierte Ergebnisse: Erzeugt am Ende zwei saubere CSV-Dateien: angereicherte_daten.csv und fehlende_daten.csv.
 
-##Setup & Installation##
+## Setup & Installation
 
-Diese Anleitung beschreibt, wie ein Entwickler das Projekt von Grund auf einrichtet.
+Diese Anleitung beschreibt, wie das Projekt von Grund auf einrichtet.
 
-##Voraussetzungen##
+## Voraussetzungen
 
-Python 3.10+ ist auf dem System installiert.
+1. Python 3.10+ ist auf dem System installiert.
 
-Hinweis für macOS: Es wird dringend empfohlen, Python von der offiziellen Webseite python.org zu installieren, um Kompatibilitätsprobleme mit der Tkinter-Bibliothek zu vermeiden, die bei Installationen über Homebrew auftreten können.
+    Hinweis für macOS: Es wird empfohlen, Python von der offiziellen Webseite python.org zu installieren, um Kompatibilitätsprobleme mit der Tkinter-Bibliothek zu vermeiden, die bei Installationen über Homebrew auftreten könnten.
 
-Der Code-Editor Visual Studio Code wird empfohlen.
+2. Ein Apify-Account und der dazugehörige API-Token.
 
-Ein Apify-Account und der dazugehörige API-Token.
+## Schritt-für-Schritt-Einrichtung
 
-##Schritt-für-Schritt-Einrichtung##
-
-1. Projekt klonen
-Klone dieses Repository auf deinen lokalen Computer:
+1. Projekt klonen: Klone dieses Repository auf deinen lokalen Computer:
 
 git clone [https://github.com/husse786/google_map_scrapper_app_ApifyActor.git](https://github.com/husse786/google_map_scrapper_app_ApifyActor.git)
 cd google_map_scrapper_app_ApifyActor
@@ -69,18 +66,16 @@ cd google_map_scrapper_app_ApifyActor
 3. Virtuelle Umgebung erstellen und aktivieren
 Eine "virtuelle Umgebung" isoliert die Projekt-Abhängigkeiten. Führe die folgenden Befehle im integrierten Terminal von VS Code aus.
 
-Erstellen:
+### Erstellen:
 
 python3 -m venv venv
 
 
-##Aktivieren:##
+### Aktivieren:
 
 Für macOS/Linux: source venv/bin/activate
 
 Für Windows: .\venv\Scripts\activate
-
-Du erkennst die aktive Umgebung am (venv)-Präfix in deiner Terminal-Zeile.
 
 4. Notwendige Pakete installieren
 Die Datei requirements.txt listet alle externen Python-Bibliotheken auf. Installiere sie mit pip:
