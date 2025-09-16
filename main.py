@@ -8,9 +8,10 @@ from pathlib import Path
 import logging
 
 # Importiere unsere eigenen Module
-from ui_manager import AppUI
-from csv_processor import CSVProcessor
-from apify_wrapper import ApifyClientWrapper
+from ui_manager import AppUI # UI-Manager-Klasse
+from csv_processor import CSVProcessor # CSV-Verarbeitungs-Klasse
+from apify_wrapper import ApifyClientWrapper # API-Client-Wrapper
+from csv_postprocessor import CSVPostProcessor # Importiere die neue Post-Processing-Klasse
 import config
 from logger_config import logger # Importiere den Logger
 
@@ -46,6 +47,7 @@ class MainApplication:
     def __init__(self, root):
         self.root = root
         self.processor = CSVProcessor()
+        self.post_processor = CSVPostProcessor()  # Initialisiere die Post-Processing-Klasse
 
         if "DEIN_APIFY_API_TOKEN" in config.APIFY_API_TOKEN:
             self.show_error_and_exit("API-Token fehlt!", "Bitte trage deinen API-Token in die config.py Datei ein.")
@@ -122,6 +124,13 @@ class MainApplication:
                 self.processor.write_csv(str(enriched_filepath), enriched_results)
                 logger.info("\nVerarbeitung abgeschlossen!")
                 logger.info(f"Alle angereicherten Daten wurden in '{enriched_filepath.name}' gespeichert.")
+                # --- NEUER POST-PROCESSING-SCHRITT ---
+                optimierte_filepath = output_dir / "optimierte_daten.csv"
+                self.post_processor.process_and_filter(
+                    input_filepath=str(enriched_filepath),
+                    output_filepath=str(optimierte_filepath),
+                    columns_to_keep=config.FINAL_COLUMNS
+                    )
             else:
                 logger.info("\nVerarbeitung abgeschlossen, aber keine Daten zum Speichern vorhanden.")
 
