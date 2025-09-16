@@ -94,9 +94,12 @@ class MainApplication:
             logger.info(f"{len(valid_data)} gültige und {len(invalid_data)} ungültige Zeilen gefunden.")
 
             output_dir = Path(filepath).parent
+            
+            input_filename_base = Path(filepath).stem # Dateiname der Input wird im Output-Pfad verwendet - Dateiname wird ohne Endung extrahiert.
 
             if invalid_data:
-                invalid_filepath = output_dir / "fehlende_daten.csv"
+                # ---Dynamischen Dateinamen verwenden ---
+                invalid_filepath = output_dir / f"{input_filename_base}_fehlende_daten.csv"
                 self.processor.write_csv(str(invalid_filepath), invalid_data)
                 logger.info(f"Ungültige Zeilen wurden in '{invalid_filepath.name}' gespeichert.")
 
@@ -120,12 +123,12 @@ class MainApplication:
                         enriched_results.append(new_row)
 
             if enriched_results:
-                enriched_filepath = output_dir / "angereicherte_daten.csv"
+                enriched_filepath = output_dir / f"{input_filename_base}_angereicherte_daten.csv"
                 self.processor.write_csv(str(enriched_filepath), enriched_results)
                 logger.info("\nVerarbeitung abgeschlossen!")
                 logger.info(f"Alle angereicherten Daten wurden in '{enriched_filepath.name}' gespeichert.")
-                # --- NEUER POST-PROCESSING-SCHRITT ---
-                optimierte_filepath = output_dir / "optimierte_daten.csv"
+                # --- POST-PROCESSING-SCHRITT ---
+                optimierte_filepath = output_dir / f"{input_filename_base}_optimierte_daten.csv"
                 self.post_processor.process_and_filter(
                     input_filepath=str(enriched_filepath),
                     output_filepath=str(optimierte_filepath),
