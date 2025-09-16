@@ -1,6 +1,6 @@
 # Google_maps_scraper_app/csv_processor.py
 
-#Dieses Modul ist für alle Operationen mit CSV-Dateien verantwortlich.
+#Dieses Modul ist für alle Operationen wie Verarbeitung, Speichern oder Erstellen von CSV-Dateien verantwortlich.
 import pandas as pd
 from typing import List, Dict, Tuple
 from logger_config import logger
@@ -31,7 +31,7 @@ class CSVProcessor:
         invalid_rows = []
 
         try:
-            # ';' als Trennzeichen, da dies in Excel oft Standard ist in DE/CH.
+            # ';' als Trennzeichen.
             # pandas zwingen, die PLZ-Spalte als Text zu lesen, um das ".0"-Problem zu vermeiden.
             df = pd.read_csv(filepath, sep=';', encoding='utf-8-sig', dtype={'PLZ': str})
 
@@ -45,7 +45,7 @@ class CSVProcessor:
             # Jede Zeile durchgehen und auf eine gültige PLZ prüfen
             for index, row in df.iterrows():
                 # pd.isna prüft, ob der Wert fehlt (NaN) oder None ist.
-                # Wir konvertieren die Zeile in ein Dictionary für die weitere Verarbeitung.
+                # konvertieren die Zeile in ein Dictionary für die weitere Verarbeitung.
                 row_dict = row.to_dict()
                 if 'PLZ' in row and pd.notna(row['PLZ']) and str(row['PLZ']).strip():
                     valid_rows.append(row_dict)
@@ -75,7 +75,7 @@ class CSVProcessor:
 
         try:
             df = pd.DataFrame(data)
-            # Wir verwenden wieder ';' als Trennzeichen und 'utf-8-sig' für die Kompatibilität.
+            # Wir verwenden ';' als Trennzeichen und 'utf-8-sig' für die Kompatibilität.
             # index=False verhindert, dass Pandas eine zusätzliche Index-Spalte schreibt.
             df.to_csv(filepath, sep=';', index=False, encoding='utf-8-sig')
             logger.info(f"Datei '{filepath}' wurde erfolgreich geschrieben.")
