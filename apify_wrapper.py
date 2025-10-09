@@ -19,15 +19,15 @@ class ApifyClientWrapper:
         Initialisiert den Apify Client.
         """
         try:
-            self.client = ApifyClient(api_token)
-            self.actor = self.client.actor(actor_id)
+            self.client = ApifyClient(api_token)  # Initialisiere den Apify Client
+            self.actor = self.client.actor(actor_id) # Greife auf den spezifischen Actor zu
             logger.info("Apify Client erfolgreich initialisiert.")
         except Exception as e:
             logger.error(f"Fehler bei der Initialisierung des Apify Clients: {e}")
             self.client = None
             self.actor = None
 
-    def run_scraper_and_get_results(self, search_string: str, postal_code: str) -> List[Dict]:
+    def run_scraper_and_get_results(self, search_string: str, postal_code: str) -> List[Dict]:  # Starte den Scraper und hole die Ergebnisse
         """
         Startet einen Actor-Run, wartet auf dessen Abschluss und holt die Ergebnisse.
         """
@@ -38,9 +38,9 @@ class ApifyClientWrapper:
         logger.info(f"\nStarte Scraper für: '{search_string}' in PLZ '{postal_code}'...")
         
         try:
-            run_input = copy.deepcopy(config.DEFAULT_ACTOR_INPUT)
-            run_input["searchStringsArray"] = [search_string]
-            run_input["postalCode"] = str(postal_code)
+            run_input = copy.deepcopy(config.DEFAULT_ACTOR_INPUT) # Kopiere den Standard-Input
+            run_input["searchStringsArray"] = [search_string] # Setze den Suchstring
+            run_input["postalCode"] = str(postal_code) # Setze die PLZ
 
             run = self.actor.call(run_input=run_input)
             
