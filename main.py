@@ -1,5 +1,5 @@
 # main.py
-# Das Gehirn der Anwendung. Verbindet UI, CSV-Verarbeitung und den API-Client.
+# Main App. Verbindet UI, CSV-Verarbeitung und den API-Client.
 
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -12,6 +12,7 @@ from ui_manager import AppUI # UI-Manager-Klasse
 from csv_processor import CSVProcessor # CSV-Verarbeitungs-Klasse
 from apify_wrapper import ApifyClientWrapper # API-Client-Wrapper
 from csv_postprocessor import CSVPostProcessor # Importiere die neue Post-Processing-Klasse
+from data_cleaner import DataCleaner # Importiere die DataCleaner-Klasse
 import config
 from logger_config import logger # Importiere den Logger
 
@@ -48,13 +49,17 @@ class MainApplication:
         self.root = root
         self.processor = CSVProcessor()
         self.post_processor = CSVPostProcessor()  # Initialisiere die Post-Processing-Klasse
+        self.cleaner = DataCleaner()  # Initialisiere die DataCleaner-Klasse
 
         if "DEIN_APIFY_API_TOKEN" in config.APIFY_API_TOKEN:
             self.show_error_and_exit("API-Token fehlt!", "Bitte trage deinen API-Token in die config.py Datei ein.")
             return
 
         self.api_client = ApifyClientWrapper(config.APIFY_API_TOKEN, config.ACTOR_ID)
-        self.ui = AppUI(root, upload_callback=self.start_processing_thread)
+        
+        self.ui = AppUI(root, 
+                        upload_callback=self.start_processing_thread,
+                        clean_callback=self.start_cleaning_thread)
         
         # Leite Logs in die UI um
         log_handler = TextHandler(self.ui.log_text)
@@ -72,15 +77,48 @@ class MainApplication:
     def start_processing_thread(self):
         """Öffnet den Dateidialog und startet den Verarbeitungsprozess in einem neuen Thread."""
         filepath = filedialog.askopenfilename(
-            title="CSV-Datei auswählen",
+            title="CSV Queldatei für Anreicherung auswählen",
             filetypes=(("CSV Files", "*.csv"), ("All files", "*.*"))
         )
         if not filepath:
             self.ui.set_status("Vorgang abgebrochen.")
             return
-
+        # Starte Anreichernungsprozess in einem Thread.
         processing_thread = threading.Thread(target=self.process_file, args=(filepath,))
         processing_thread.start()
+
+    def start_cleaning_thread(self):
+        """Öffnet den Dateidialog und startet den Bereinigungsprozess in einem neuen Thread."""
+        filepath = filedialog.askopenfilename(title="2. Optimierte Datei zur Bereinigung auswählen", filetypes=(("CSV Files", "*.csv"),))
+        if not filepath:
+            self.ui.set_status("Vorgang abgebrochen.")
+            return
+        # Starte den Bereinigungsprozess in einem Thread
+        threading.Thread(target=self.process_cleaning, args=(filepath,)).start()
+
+    def process_cleaning(self, filepath: str):
+        """Führt den Bereinigungsprozess im Hintergrund aus."""
+        try:
+            self.ui.upload_button.config(state=tk.DISABLED)
+            self.ui.clean_button.config(state=tk.DISABLED)
+            self.ui.set_status(f"Bereinige Datei: {Path(filepath).name}...")
+            logger.info("--------------------------------")
+
+            input_filename_base = Path(filepath).stem
+            output_dir = Path(filepath).parent
+
+            cleaned_filepath = output_dir / f"{input_filename_base}_bereinigt.csv"
+            rejected_filepath = output_dir / f"{input_filename_base}_aussortiert.csv"
+
+            self.cleaner.clean_data(filepath, str(cleaned_filepath), str(rejected_filepath))
+            logger.info("Bereinigung abgeschlossen.")
+
+        except Exception as e:
+            logger.critical(f"Ein kritischer Fehler ist bei der Bereinigung aufgetreten: {e}")
+        finally:
+            self.ui.set_status("Bereit.")
+            self.ui.upload_button.config(state=tk.NORMAL)
+            self.ui.clean_button.config(state=tk.NORMAL)
 
     def process_file(self, filepath: str):
         """Die Hauptlogik, die in einem Hintergrund-Thread läuft."""
@@ -143,6 +181,7 @@ class MainApplication:
         finally:
             self.ui.set_status("Bereit. Bitte eine CSV-Datei zum Hochladen auswählen.")
             self.ui.upload_button.config(state=tk.NORMAL)
+            self.ui.clean_button.config(state=tk.NORMAL)
 
     def run(self):
         """Startet die Haupt-Event-Loop der Anwendung."""
