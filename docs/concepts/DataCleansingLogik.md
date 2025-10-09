@@ -1,37 +1,46 @@
-# Datenbereinigungs-Logik
+# Anhang: Detaillierte Logik des Datenbereinigungs-Moduls (`data_cleaner.py`)
 
-## Anhang: Detaillierte Logik des Datenbereinigungs-Moduls (`data_cleaner.py`)
+## 1. Grundprinzip
 
-### 1. Grundprinzip
+Das Ziel des `DataCleaner`-Moduls ist es, **alle plausiblen Treffer zu behalten** und nur **eindeutig falsche Ergebnisse auszusortieren**, um die Datenqualität zu maximieren. Das oberste Gebot ist, dass keine `KundenNr` aus der finalen Ergebnisliste verloren geht.
 
-Das Ziel des `DataCleaner`-Moduls ist nicht mehr, den *einen besten* Treffer zu finden, sondern **alle plausiblen Treffer zu behalten** und nur **eindeutig falsche Ergebnisse auszusortieren**. Das oberste Gebot ist, dass keine `KundenNr` aus der finalen Ergebnisliste verloren geht.
+Die Logik wird nur auf `KundenNr` angewendet, die mehr als ein Ergebnis haben. Kunden mit nur einem Ergebnis werden ohne Prüfung als korrekt übernommen.
 
-Die Logik wird nur auf `KundenNr` angewendet, die mehr als ein Ergebnis in der `optimierte_daten.csv` haben. Kunden mit nur einem Ergebnis werden ohne Prüfung als korrekt übernommen.
+## 2. Das Scoring-Modell
 
-### 2. Vorbereitung: Text-Normalisierung
+Um die Plausibilität jedes Ergebnisses objektiv zu bewerten, wird ein gewichtetes Punktesystem verwendet. Jedes Ergebnis erhält einen **Gesamt-Score**.
 
-Bevor ein Vergleich stattfindet, werden alle relevanten Textfelder (`SearchString`, Google-`title`, Google-`street`) temporär "normalisiert", um die Vergleichsqualität zu erhöhen. Die Originaldaten bleiben unberührt. Die Normalisierung umfasst:
+### 2.1. Vorbereitung: Text-Normalisierung
 
-* Umwandlung in Kleinbuchstaben.
-* Ersetzung gängiger Abkürzungen (z.B. `str.` → `strasse`).
-* Auflösung von Umlauten (z.B. `ü` → `ue`).
+Vor jedem Vergleich werden die relevanten Texte (`SearchString`, `title`, `street`) temporär "normalisiert" (Kleinbuchstaben, Ersetzung von Abkürzungen und Umlauten), um die Vergleichsqualität zu erhöhen. Die Originaldaten bleiben dabei unberührt.
 
-### 3. Kernlogik: Die stufenweise Filterung
+### 2.2. Kriterium A: Gewichteter Titel-Score (max. 100 Punkte)
 
-Der Algorithmus unterscheidet zwischen zwei Hauptszenarien, basierend auf dem Inhalt des `SearchString`.
+Der Titel-Score setzt sich aus zwei Teilen zusammen, um sowohl den Markennamen als auch den Gesamtkontext zu bewerten:
 
-#### Szenario A: Der `SearchString` enthält KEINE Strassenangabe
+* **Kern-Namen-Score (70% Gewichtung):** Vergleicht nur das erste Wort des Such-Titels mit dem ersten Wort des Google-Titels. Dies priorisiert die Übereinstimmung der Marke (z.B. "Denner" vs. "Denner").
+* **Gesamt-Titel-Score (30% Gewichtung):** Vergleicht den gesamten Titel aus dem `SearchString` mit dem gesamten Google-`title`, um zusätzliche Übereinstimmungen (z.B. "Supermarkt") zu belohnen.
 
-Wenn die Suche breit angelegt ist, ist der Titel das entscheidende Kriterium.
+### 2.3. Kriterium B: Strassen-Bonus (Bonus: 50 Punkte)
 
-* **Regel A.1 (Plausible Titel finden):** Das System vergleicht den normalisierten Kern-Namen aus dem `SearchString` mit dem normalisierten `title` jedes Ergebnisses. Alle Ergebnisse, die eine hohe textuelle Ähnlichkeit aufweisen (basierend auf einem Schwellenwert, z.B. > 85%), werden als "plausibel" markiert und für die Endauswahl behalten.
-* **Regel A.2 (Fallback bei null Treffern):** Sollte die Titel-Prüfung nach Regel A.1 kein einziges plausibles Ergebnis liefern, bricht der Filterprozess für diesen Kunden ab. Um Datenverlust zu vermeiden, werden **alle** ursprünglich von Google gelieferten Ergebnisse für diesen Kunden als korrekt gewertet.
+Dies ist ein starker Bonus, der als "Tie-Breaker" dient.
 
-#### Szenario B: Der `SearchString` enthält EINE Strassenangabe
+* Wenn der `SearchString` eine Strasse enthält und diese mit der `street`-Angabe des Google-Ergebnisses übereinstimmt, erhält das Ergebnis **+50 Bonuspunkte**.
 
-Wenn die Suche spezifisch für einen Ort ist, hat die Adresse die höchste Priorität.
+## 3. Kernlogik: Die stufenweise Filterung
 
-* **Regel B.1 (Filter 1: Strasse hat Vorrang):** Das System vergleicht die normalisierte `street` aus den Google-Ergebnissen mit der normalisierten Strassenangabe im `SearchString`. Es werden **nur** die Ergebnisse für die weitere Prüfung behalten, bei denen eine Übereinstimmung gefunden wird.
-* **Regel B.2 (Stopp-Bedingung):** Ist nach dem Strassen-Filter nur noch **ein** Ergebnis übrig, wird dieses als korrekt akzeptiert und der Prozess für diesen Kunden ist beendet.
-* **Regel B.3 (Filter 2: Titel als Tie-Breaker):** Sind nach dem Strassen-Filter **mehr als ein** Ergebnis übrig, wird als Nächstes ein Titel-Abgleich (wie in Regel A.1) durchgeführt, um die Liste weiter zu verfeinern. Alle Ergebnisse, die hier durchfallen, werden aussortiert.
-* **Regel B.4 (Fallback bei null Treffern):** Wenn die Kombination aus Strassen- und Titel-Filter zu **null** Ergebnissen führt (z.B. weil der Titel im `SearchString` veraltet ist), wird der Titel-Filter ignoriert. Stattdessen werden **alle** Ergebnisse behalten, die zumindest die Strassen-Prüfung (Regel B.1) bestanden haben.
+Der Algorithmus unterscheidet zwischen zwei Hauptszenarien:
+
+### Szenario A: Der `SearchString` enthält KEINE Strassenangabe
+
+* **Regel A.1 (Plausible Titel finden):** Für jedes Ergebnis wird der **Gesamt-Score** (hier nur der gewichtete Titel-Score) berechnet. Alle Ergebnisse, deren Score über einem definierten Schwellenwert liegt (aktuell **80**), gelten als "plausibel" und werden behalten.
+* **Regel A.2 (Fallback):** Sollte kein einziges Ergebnis den Schwellenwert erreichen, werden alle ursprünglichen Ergebnisse für diesen Kunden behalten, um Datenverlust zu vermeiden.
+
+### Szenario B: Der `SearchString` enthält EINE Strassenangabe
+
+Hier hat die Adresse die höchste Priorität.
+
+* **Regel B.1 (Filter 1: Strasse):** Das System behält zuerst **nur** die Ergebnisse, deren `street`-Wert eine hohe Ähnlichkeit mit der Angabe im `SearchString` aufweist.
+* **Regel B.2 (Stopp-Bedingung):** Ist nach dem Strassen-Filter nur noch **ein** Ergebnis übrig, wird dieses akzeptiert.
+* **Regel B.3 (Filter 2: Titel):** Sind mehrere Ergebnisse übrig, wird die Titel-Logik aus Szenario A angewendet, um die Liste weiter zu verfeinern.
+* **Regel B.4 (Fallback):** Führt die Kombination aus Strassen- und Titel-Filter zu null Ergebnissen, werden alle Ergebnisse behalten, die zumindest den Strassen-Filter (Regel B.1) bestanden haben.
