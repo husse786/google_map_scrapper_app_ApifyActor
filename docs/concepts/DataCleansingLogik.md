@@ -42,4 +42,3 @@ Wenn die Suche spezifisch für einen Ort ist, hat die Adresse die höchste Prior
 ## 3. Hilfswerkzeuge
 
 * **Text-Normalisierung:** Vor jedem Vergleich werden alle relevanten Texte (`SearchString`, `title`, `street`) temporär "normalisiert" (Kleinbuchstaben, Ersetzung von Abkürzungen und Umlauten), um die Vergleichsqualität zu erhöhen. Die Originaldaten bleiben dabei unberührt.
-* **Kein Strassen-Bonus:** In der finalen Implementierung wird **kein Strassen-Bonus** mehr verwendet. Stattdessen wird die Strasse als harter, priorisierter Filter in Szenario B eingesetzt, was wesentlich zuverlässiger ist.
