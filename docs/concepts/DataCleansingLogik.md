@@ -2,45 +2,44 @@
 
 ## 1. Grundprinzip
 
-Das Ziel des `DataCleaner`-Moduls ist es, **alle plausiblen Treffer zu behalten** und nur **eindeutig falsche Ergebnisse auszusortieren**, um die Datenqualität zu maximieren. Das oberste Gebot ist, dass keine `KundenNr` aus der finalen Ergebnisliste verloren geht.
+Das Ziel des `DataCleaner`-Moduls ist es, für jede `KundenNr` die bestmöglichen Ergebnisse zu identifizieren und sie in drei Kategorien einzuteilen: eindeutig korrekte Treffer, unklare Fälle zur manuellen Prüfung und eindeutig falsche Treffer. Das oberste Gebot ist, dass keine `KundenNr` aus der finalen Ergebnisliste verloren geht.
 
-Die Logik wird nur auf `KundenNr` angewendet, die mehr als ein Ergebnis haben. Kunden mit nur einem Ergebnis werden ohne Prüfung als korrekt übernommen.
+Die Logik wird nur auf `KundenNr` angewendet, die mehr als ein Ergebnis haben. Kunden mit nur einem Ergebnis werden ohne Prüfung als **OK** eingestuft.
 
-## 2. Das Scoring-Modell
+## 2. Kernlogik: Die stufenweise Filterung
 
-Um die Plausibilität jedes Ergebnisses objektiv zu bewerten, wird ein gewichtetes Punktesystem verwendet. Jedes Ergebnis erhält einen **Gesamt-Score**.
-
-### 2.1. Vorbereitung: Text-Normalisierung
-
-Vor jedem Vergleich werden die relevanten Texte (`SearchString`, `title`, `street`) temporär "normalisiert" (Kleinbuchstaben, Ersetzung von Abkürzungen und Umlauten), um die Vergleichsqualität zu erhöhen. Die Originaldaten bleiben dabei unberührt.
-
-### 2.2. Kriterium A: Gewichteter Titel-Score (max. 100 Punkte)
-
-Der Titel-Score setzt sich aus zwei Teilen zusammen, um sowohl den Markennamen als auch den Gesamtkontext zu bewerten:
-
-* **Kern-Namen-Score (70% Gewichtung):** Vergleicht nur das erste Wort des Such-Titels mit dem ersten Wort des Google-Titels. Dies priorisiert die Übereinstimmung der Marke (z.B. "Denner" vs. "Denner").
-* **Gesamt-Titel-Score (30% Gewichtung):** Vergleicht den gesamten Titel aus dem `SearchString` mit dem gesamten Google-`title`, um zusätzliche Übereinstimmungen (z.B. "Supermarkt") zu belohnen.
-
-### 2.3. Kriterium B: Strassen-Bonus (Bonus: 50 Punkte)
-
-Dies ist ein starker Bonus, der als "Tie-Breaker" dient.
-
-* Wenn der `SearchString` eine Strasse enthält und diese mit der `street`-Angabe des Google-Ergebnisses übereinstimmt, erhält das Ergebnis **+50 Bonuspunkte**.
-
-## 3. Kernlogik: Die stufenweise Filterung
-
-Der Algorithmus unterscheidet zwischen zwei Hauptszenarien:
+Der Algorithmus unterscheidet strikt zwischen zwei Szenarien, die durch den Inhalt des `SearchString` bestimmt werden.
 
 ### Szenario A: Der `SearchString` enthält KEINE Strassenangabe
 
-* **Regel A.1 (Plausible Titel finden):** Für jedes Ergebnis wird der **Gesamt-Score** (hier nur der gewichtete Titel-Score) berechnet. Alle Ergebnisse, deren Score über einem definierten Schwellenwert liegt (aktuell **80**), gelten als "plausibel" und werden behalten.
-* **Regel A.2 (Fallback):** Sollte kein einziges Ergebnis den Schwellenwert erreichen, werden alle ursprünglichen Ergebnisse für diesen Kunden behalten, um Datenverlust zu vermeiden.
+Wenn die Suche breit angelegt ist, wird eine mehrstufige Titel-Bewertung durchgeführt:
+
+1. **Gewichtetes Scoring:** Für jedes Ergebnis wird ein **gewichteter Titel-Score** berechnet (70% Gewichtung auf den Markennamen, 30% auf den gesamten Titel).
+
+2. **Fester Schwellenwert:** Es wird geprüft, ob Ergebnisse einen Score von **`>= 80`** erreichen.
+    * **Wenn ja:** Alle Ergebnisse `>= 80` werden als **OK** eingestuft. Alle Ergebnisse `< 80` werden als **AUSSORTIERT** eingestuft.
+    * **Wenn nein:** Der nächste Schritt wird ausgelöst.
+
+3. **Dynamischer Schwellenwert (Sicherheitsnetz):** Wenn kein Ergebnis den festen Schwellenwert erreicht, wird der Punkteabstand (`DYNAMIC_THRESHOLD_GAP`) zwischen dem besten und dem zweitbesten Ergebnis geprüft.
+    * **Wenn der Abstand groß ist (`>= 30`):** Der beste Treffer wird als "wahrscheinlicher Gewinner" mit der Qualität **OK** akzeptiert. Alle anderen werden als **AUSSORTIERT** eingestuft.
+    * **Wenn der Abstand klein ist:** Die Situation ist unklar. Alle Ergebnisse dieser Gruppe werden als **ZUR_PRUEFUNG** markiert.
 
 ### Szenario B: Der `SearchString` enthält EINE Strassenangabe
 
-Hier hat die Adresse die höchste Priorität.
+Wenn die Suche spezifisch für einen Ort ist, hat die Adresse die höchste Priorität.
 
-* **Regel B.1 (Filter 1: Strasse):** Das System behält zuerst **nur** die Ergebnisse, deren `street`-Wert eine hohe Ähnlichkeit mit der Angabe im `SearchString` aufweist.
-* **Regel B.2 (Stopp-Bedingung):** Ist nach dem Strassen-Filter nur noch **ein** Ergebnis übrig, wird dieses akzeptiert.
-* **Regel B.3 (Filter 2: Titel):** Sind mehrere Ergebnisse übrig, wird die Titel-Logik aus Szenario A angewendet, um die Liste weiter zu verfeinern.
-* **Regel B.4 (Fallback):** Führt die Kombination aus Strassen- und Titel-Filter zu null Ergebnissen, werden alle Ergebnisse behalten, die zumindest den Strassen-Filter (Regel B.1) bestanden haben.
+1. **Filter 1: Strasse hat Vorrang:** Das System filtert zuerst **strikt** nach der Strasse.
+    * Ergebnisse, deren `street`-Wert eine hohe Ähnlichkeit mit der Angabe im `SearchString` aufweist, werden für den nächsten Schritt **behalten**.
+    * Alle anderen Ergebnisse werden **sofort AUSSORTIERT**.
+
+2. **Stopp-Bedingung & Fallbacks:**
+    * **Wenn nach dem Strassen-Filter 0 Ergebnisse übrig sind:** Die Strassensuche war erfolglos. Alle ursprünglichen Ergebnisse dieser Gruppe werden als **ZUR_PRUEFUNG** markiert.
+    * **Wenn nach dem Strassen-Filter 1 Ergebnis übrig ist:** Dies ist der eindeutige Gewinner und wird als **OK** eingestuft.
+
+3. **Filter 2: Titel als "Tie-Breaker":**
+    * Nur wenn **mehr als 1 Ergebnis** den Strassen-Filter bestanden hat, wird die **komplette Logik aus Szenario A** (inkl. gewichtetem Scoring und dynamischem Schwellenwert) auf diese reduzierte Auswahl angewendet, um die endgültige Entscheidung zu treffen.
+
+## 3. Hilfswerkzeuge
+
+* **Text-Normalisierung:** Vor jedem Vergleich werden alle relevanten Texte (`SearchString`, `title`, `street`) temporär "normalisiert" (Kleinbuchstaben, Ersetzung von Abkürzungen und Umlauten), um die Vergleichsqualität zu erhöhen. Die Originaldaten bleiben dabei unberührt.
+* **Kein Strassen-Bonus:** In der finalen Implementierung wird **kein Strassen-Bonus** mehr verwendet. Stattdessen wird die Strasse als harter, priorisierter Filter in Szenario B eingesetzt, was wesentlich zuverlässiger ist.
