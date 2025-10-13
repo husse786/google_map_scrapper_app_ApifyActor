@@ -58,8 +58,8 @@ class MainApplication:
         self.api_client = ApifyClientWrapper(config.APIFY_API_TOKEN, config.ACTOR_ID)
         
         self.ui = AppUI(root, 
-                        upload_callback=self.start_processing_thread,
-                        clean_callback=self.start_cleaning_thread)
+                upload_callback=self.start_processing_thread,
+                clean_callback=self.start_cleaning_thread)
         
         # Leite Logs in die UI um
         log_handler = TextHandler(self.ui.log_text)
@@ -86,14 +86,17 @@ class MainApplication:
         # Starte Anreichernungsprozess in einem Thread.
         processing_thread = threading.Thread(target=self.process_file, args=(filepath,))
         processing_thread.start()
+    
 
     def start_cleaning_thread(self):
         """Öffnet den Dateidialog und startet den Bereinigungsprozess in einem neuen Thread."""
-        filepath = filedialog.askopenfilename(title="2. Optimierte Datei zur Bereinigung auswählen", filetypes=(("CSV Files", "*.csv"),))
+        filepath = filedialog.askopenfilename(
+            title="2. Optimierte Datei zur Bereinigung auswählen", 
+            filetypes=(("CSV Files", "*.csv"),)
+        )
         if not filepath:
-            self.ui.set_status("Vorgang abgebrochen.")
+            self.ui.set_status("Bereinigung abgebrochen.")
             return
-        # Starte den Bereinigungsprozess in einem Thread
         threading.Thread(target=self.process_cleaning, args=(filepath,)).start()
 
     def process_cleaning(self, filepath: str):
@@ -103,14 +106,23 @@ class MainApplication:
             self.ui.clean_button.config(state=tk.DISABLED)
             self.ui.set_status(f"Bereinige Datei: {Path(filepath).name}...")
             logger.info("--------------------------------")
-
-            input_filename_base = Path(filepath).stem
+            logger.info(f"Starte Bereinigung für: {Path(filepath).name}")
+            # Dateipfade für die Ausgabe generieren
+            
+            input_filename_base = Path(filepath).stem.replace("_optimierte_daten", "")
             output_dir = Path(filepath).parent
 
-            cleaned_filepath = output_dir / f"{input_filename_base}_bereinigt.csv"
+            cleaned_ok_filepath = output_dir / f"{input_filename_base}_eindeutig.csv"
+            cleaned_review_filepath = output_dir / f"{input_filename_base}_zur_pruefung.csv"
             rejected_filepath = output_dir / f"{input_filename_base}_aussortiert.csv"
 
-            self.cleaner.clean_data(filepath, str(cleaned_filepath), str(rejected_filepath))
+            # Alle vier Argumente korrekt übergeben ---
+            self.cleaner.clean_data(
+                str(filepath), 
+                str(cleaned_ok_filepath), 
+                str(cleaned_review_filepath), 
+                str(rejected_filepath)
+            )
             logger.info("Bereinigung abgeschlossen.")
 
         except Exception as e:
@@ -120,10 +132,15 @@ class MainApplication:
             self.ui.upload_button.config(state=tk.NORMAL)
             self.ui.clean_button.config(state=tk.NORMAL)
 
-    def process_file(self, filepath: str):
+    def process_file(self, filepath: str): 
         """Die Hauptlogik, die in einem Hintergrund-Thread läuft."""
         try:
+            # Beide Buttons sperren
             self.ui.upload_button.config(state=tk.DISABLED)
+            self.ui.clean_button.config(state=tk.DISABLED)
+            
+            # ... (der gesamte Code für die Anreicherung bleibt hier unverändert) ...
+            
             self.ui.set_status(f"Verarbeite Datei: {Path(filepath).name}...")
             logger.info("--------------------------------")
             logger.info(f"Datei '{Path(filepath).name}' wird verarbeitet...")
@@ -132,11 +149,9 @@ class MainApplication:
             logger.info(f"{len(valid_data)} gültige und {len(invalid_data)} ungültige Zeilen gefunden.")
 
             output_dir = Path(filepath).parent
-            
-            input_filename_base = Path(filepath).stem # Dateiname der Input wird im Output-Pfad verwendet - Dateiname wird ohne Endung extrahiert.
+            input_filename_base = Path(filepath).stem
 
             if invalid_data:
-                # ---Dynamischen Dateinamen verwenden ---
                 invalid_filepath = output_dir / f"{input_filename_base}_fehlende_daten.csv"
                 self.processor.write_csv(str(invalid_filepath), invalid_data)
                 logger.info(f"Ungültige Zeilen wurden in '{invalid_filepath.name}' gespeichert.")
@@ -148,10 +163,8 @@ class MainApplication:
                 search_string = str(row.get("SearchString", ""))
                 plz = str(row.get("PLZ", ""))
                 self.ui.set_status(f"Verarbeite Zeile {i+1}/{total_valid}: {search_string}")
-
                 api_results = self.api_client.run_scraper_and_get_results(search_string, plz)
                 logger.info(f"-> Zeile {i+1}/{total_valid}: '{search_string}' - {len(api_results)} Ergebnis(se) von Apify erhalten.")
-
                 if not api_results:
                     enriched_results.append(row)
                 else:
@@ -163,15 +176,14 @@ class MainApplication:
             if enriched_results:
                 enriched_filepath = output_dir / f"{input_filename_base}_angereicherte_daten.csv"
                 self.processor.write_csv(str(enriched_filepath), enriched_results)
-                logger.info("\nVerarbeitung abgeschlossen!")
-                logger.info(f"Alle angereicherten Daten wurden in '{enriched_filepath.name}' gespeichert.")
-                # --- POST-PROCESSING-SCHRITT ---
+                logger.info("\nRohdaten-Anreicherung abgeschlossen!")
+                logger.info(f"Alle angereicherten Rohdaten wurden in '{enriched_filepath.name}' gespeichert.")
                 optimierte_filepath = output_dir / f"{input_filename_base}_optimierte_daten.csv"
                 self.post_processor.process_and_filter(
                     input_filepath=str(enriched_filepath),
                     output_filepath=str(optimierte_filepath),
                     columns_to_keep=config.FINAL_COLUMNS
-                    )
+                )
             else:
                 logger.info("\nVerarbeitung abgeschlossen, aber keine Daten zum Speichern vorhanden.")
 
@@ -179,7 +191,8 @@ class MainApplication:
             logger.critical(f"\nEin kritischer Fehler ist aufgetreten: {e}")
             messagebox.showerror("Kritischer Fehler", f"Ein unerwarteter Fehler ist aufgetreten:\n{e}")
         finally:
-            self.ui.set_status("Bereit. Bitte eine CSV-Datei zum Hochladen auswählen.")
+            # Beide Buttons wieder freigeben
+            self.ui.set_status("Bereit. Bitte eine Datei auswählen.")
             self.ui.upload_button.config(state=tk.NORMAL)
             self.ui.clean_button.config(state=tk.NORMAL)
 
