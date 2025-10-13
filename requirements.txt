@@ -1,3 +1,5 @@
 pandas
 requests
 apify-client
+thefuzz
+python-levenshtein

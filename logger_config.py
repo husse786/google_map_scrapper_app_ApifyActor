@@ -14,7 +14,7 @@ def setup_logger():
     """Richtet den zentralen Logger ein."""
     # Logger-Instanz holen
     logger = logging.getLogger("AppLogger")
-    logger.setLevel(logging.INFO) # Loggt alles ab dem Level INFO (INFO, WARNING, ERROR, CRITICAL)
+    logger.setLevel(logging.DEBUG) # DEBUG ist detaillierter als INFO
 
     # Verhindern, dass Handler mehrfach hinzugefügt werden
     if logger.hasHandlers():
