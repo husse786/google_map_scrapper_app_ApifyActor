@@ -6,6 +6,7 @@ from tkinter import filedialog, messagebox
 import threading
 from pathlib import Path
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Importiere unsere eigenen Module
 from ui_manager import AppUI # UI-Manager-Klasse
@@ -131,71 +132,87 @@ class MainApplication:
             self.ui.set_status("Bereit.")
             self.ui.upload_button.config(state=tk.NORMAL)
             self.ui.clean_button.config(state=tk.NORMAL)
+    def _enrich_worker(self, i, total_valid, row):
+        """Führt die API-Anreicherung für eine einzelne Zeile aus (wird von einem Thread aufgerufen)."""
+        search_string = str(row.get("SearchString", ""))
+        plz = str(row.get("PLZ", ""))
+        
+        # UI-Update muss sicher über das Hauptfenster laufen
+        self.root.after(0, self.ui.set_status, f"Verarbeite Zeile {i+1}/{total_valid}: {search_string}")
+        
+        api_results = self.api_client.run_scraper_and_get_results(search_string, plz)
+        
+        logger.info(f"-> Zeile {i+1}/{total_valid}: '{search_string}' - {len(api_results)} Ergebnis(se) von Apify erhalten.")
+        
+        # Gib die Original-Zeile UND das API-Ergebnis zurück
+        return row, api_results
 
-    def process_file(self, filepath: str): 
-        """Die Hauptlogik, die in einem Hintergrund-Thread läuft."""
-        try:
-            # Beide Buttons sperren
-            self.ui.upload_button.config(state=tk.DISABLED)
-            self.ui.clean_button.config(state=tk.DISABLED)
-            
-            # ... (der gesamte Code für die Anreicherung bleibt hier unverändert) ...
-            
-            self.ui.set_status(f"Verarbeite Datei: {Path(filepath).name}...")
-            logger.info("--------------------------------")
-            logger.info(f"Datei '{Path(filepath).name}' wird verarbeitet...")
+    def process_file(self, filepath: str):
+            """Die Hauptlogik, die den Anreicherungsprozess parallel steuert."""
+            try:
+                self.ui.upload_button.config(state=tk.DISABLED)
+                self.ui.clean_button.config(state=tk.DISABLED)
+                self.ui.set_status(f"Verarbeite Datei: {Path(filepath).name}...")
+                logger.info("--------------------------------")
+                logger.info(f"Datei '{Path(filepath).name}' wird verarbeitet...")
 
-            valid_data, invalid_data = self.processor.load_and_validate(filepath)
-            logger.info(f"{len(valid_data)} gültige und {len(invalid_data)} ungültige Zeilen gefunden.")
+                valid_data, invalid_data = self.processor.load_and_validate(filepath)
+                logger.info(f"{len(valid_data)} gültige und {len(invalid_data)} ungültige Zeilen gefunden.")
 
-            output_dir = Path(filepath).parent
-            input_filename_base = Path(filepath).stem
+                output_dir = Path(filepath).parent
+                input_filename_base = Path(filepath).stem
 
-            if invalid_data:
-                invalid_filepath = output_dir / f"{input_filename_base}_fehlende_daten.csv"
-                self.processor.write_csv(str(invalid_filepath), invalid_data)
-                logger.info(f"Ungültige Zeilen wurden in '{invalid_filepath.name}' gespeichert.")
+                if invalid_data:
+                    invalid_filepath = output_dir / f"{input_filename_base}_fehlende_daten.csv"
+                    self.processor.write_csv(str(invalid_filepath), invalid_data)
+                    logger.info(f"Ungültige Zeilen wurden in '{invalid_filepath.name}' gespeichert.")
 
-            enriched_results = []
-            total_valid = len(valid_data)
+                enriched_results = []
+                
+                # --- START DER PARALLELEN VERARBEITUNG ---
+                # Wir erstellen einen Pool mit 4 Worker-Threads.
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    # Wir übergeben alle Aufgaben an den Pool.
+                    # Jede Aufgabe ist ein Aufruf unserer _enrich_worker-Funktion.
+                    futures = [executor.submit(self._enrich_worker, i, len(valid_data), row) 
+                            for i, row in enumerate(valid_data)]
 
-            for i, row in enumerate(valid_data):
-                search_string = str(row.get("SearchString", ""))
-                plz = str(row.get("PLZ", ""))
-                self.ui.set_status(f"Verarbeite Zeile {i+1}/{total_valid}: {search_string}")
-                api_results = self.api_client.run_scraper_and_get_results(search_string, plz)
-                logger.info(f"-> Zeile {i+1}/{total_valid}: '{search_string}' - {len(api_results)} Ergebnis(se) von Apify erhalten.")
-                if not api_results:
-                    enriched_results.append(row)
+                    # Wir warten auf die Ergebnisse, sobald sie eintreffen.
+                    for future in as_completed(futures):
+                        original_row, api_results = future.result()
+                        
+                        # Logik zum Zusammenführen der Ergebnisse (wie vorher)
+                        if not api_results:
+                            enriched_results.append(original_row)
+                        else:
+                            for result in api_results:
+                                new_row = original_row.copy()
+                                new_row.update(result)
+                                enriched_results.append(new_row)
+                # --- ENDE DER PARALLELEN VERARBEITUNG ---
+
+                if enriched_results:
+                    enriched_filepath = output_dir / f"{input_filename_base}_angereicherte_daten.csv"
+                    self.processor.write_csv(str(enriched_filepath), enriched_results)
+                    logger.info("\nRohdaten-Anreicherung abgeschlossen!")
+                    logger.info(f"Alle angereicherten Rohdaten wurden in '{enriched_filepath.name}' gespeichert.")
+                    
+                    optimierte_filepath = output_dir / f"{input_filename_base}_optimierte_daten.csv"
+                    self.post_processor.process_and_filter(
+                        input_filepath=str(enriched_filepath),
+                        output_filepath=str(optimierte_filepath),
+                        columns_to_keep=config.FINAL_COLUMNS
+                    )
                 else:
-                    for result in api_results:
-                        new_row = row.copy()
-                        new_row.update(result)
-                        enriched_results.append(new_row)
+                    logger.info("\nVerarbeitung abgeschlossen, aber keine Daten zum Speichern vorhanden.")
 
-            if enriched_results:
-                enriched_filepath = output_dir / f"{input_filename_base}_angereicherte_daten.csv"
-                self.processor.write_csv(str(enriched_filepath), enriched_results)
-                logger.info("\nRohdaten-Anreicherung abgeschlossen!")
-                logger.info(f"Alle angereicherten Rohdaten wurden in '{enriched_filepath.name}' gespeichert.")
-                optimierte_filepath = output_dir / f"{input_filename_base}_optimierte_daten.csv"
-                self.post_processor.process_and_filter(
-                    input_filepath=str(enriched_filepath),
-                    output_filepath=str(optimierte_filepath),
-                    columns_to_keep=config.FINAL_COLUMNS
-                )
-            else:
-                logger.info("\nVerarbeitung abgeschlossen, aber keine Daten zum Speichern vorhanden.")
-
-        except Exception as e:
-            logger.critical(f"\nEin kritischer Fehler ist aufgetreten: {e}")
-            messagebox.showerror("Kritischer Fehler", f"Ein unerwarteter Fehler ist aufgetreten:\n{e}")
-        finally:
-            # Beide Buttons wieder freigeben
-            self.ui.set_status("Bereit. Bitte eine Datei auswählen.")
-            self.ui.upload_button.config(state=tk.NORMAL)
-            self.ui.clean_button.config(state=tk.NORMAL)
-
+            except Exception as e:
+                logger.critical(f"\nEin kritischer Fehler ist aufgetreten: {e}")
+                messagebox.showerror("Kritischer Fehler", f"Ein unerwarteter Fehler ist aufgetreten:\n{e}")
+            finally:
+                self.ui.set_status("Bereit. Bitte eine Datei auswählen.")
+                self.ui.upload_button.config(state=tk.NORMAL)
+                self.ui.clean_button.config(state=tk.NORMAL)
     def run(self):
         """Startet die Haupt-Event-Loop der Anwendung."""
         self.root.mainloop()
