@@ -1,4 +1,5 @@
-google-maps-scraper-app/
+# google-maps-scraper-app/
+
 │
 ├── main.py               # Koordiniert den gesamten Ablauf und die UI
 │
