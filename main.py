@@ -108,23 +108,18 @@ class MainApplication:
             self.ui.set_status(f"Bereinige Datei: {Path(filepath).name}...")
             logger.info("--------------------------------")
             logger.info(f"Starte Bereinigung für: {Path(filepath).name}")
-            # Dateipfade für die Ausgabe generieren
-            
-            input_filename_base = Path(filepath).stem.replace("_optimierte_daten", "")
-            output_dir = Path(filepath).parent
 
-            cleaned_ok_filepath = output_dir / f"{input_filename_base}_eindeutig.csv"
-            cleaned_review_filepath = output_dir / f"{input_filename_base}_zur_pruefung.csv"
-            rejected_filepath = output_dir / f"{input_filename_base}_aussortiert.csv"
+            results = self.cleaner.clean_data(str(filepath))
 
-            # Alle vier Argumente korrekt übergeben ---
-            self.cleaner.clean_data(
-                str(filepath), 
-                str(cleaned_ok_filepath), 
-                str(cleaned_review_filepath), 
-                str(rejected_filepath)
-            )
-            logger.info("Bereinigung abgeschlossen.")
+            logger.info("================================")
+            logger.info("Bereinigung abgeschlossen!")
+            logger.info(f"  Eindeutig:      {results.get('eindeutig', 'N/A')}")
+            logger.info(f"  Zur Prüfung:    {results.get('zur_pruefung', 'N/A')}")
+            logger.info(f"  Aussortiert:     {results.get('aussortiert', 'N/A')}")
+            if 'erneut_crawlen' in results:
+                logger.info(f"  Erneut Crawlen: {results.get('erneut_crawlen')}")
+                logger.info("  → Diese Datei kann direkt in Schritt 1 (Anreichern) verwendet werden.")
+            logger.info("================================")
 
         except Exception as e:
             logger.critical(f"Ein kritischer Fehler ist bei der Bereinigung aufgetreten: {e}")
