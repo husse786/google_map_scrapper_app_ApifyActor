@@ -3,148 +3,299 @@
 
 import pandas as pd
 from thefuzz import fuzz
+import logging
 import re
-from logger_config import logger
-import config
+
+logger = logging.getLogger(__name__)
 
 class DataCleaner:
-    def __init__(self, title_similarity_threshold=80, dynamic_gap_threshold=config.DYNAMIC_THRESHOLD_GAP):
-        self.title_similarity_threshold = title_similarity_threshold
+    """Bereinigt und dedupliziert die angereicherten Google Maps Daten."""
+
+    # --- FIX A: Generic category words that carry no brand info ---
+    GENERIC_FIRST_WORDS = {
+        'restaurant', 'metzgerei', 'kiosk', 'hotel', 'cafe', 'bäckerei', 'baeckerei',
+        'gasthof', 'gasthaus', 'berggasthaus', 'pension', 'bar', 'bistro', 'pizzeria',
+        'garage', 'apotheke', 'drogerie', 'coiffeur', 'salon', 'praxis', 'laden',
+        'shop', 'markt', 'zentrum', 'haus', 'stiftung', 'verein', 'genossenschaft',
+        'tankstelle', 'station', 'post', 'filiale', 'freibad', 'badi', 'hallenbad',
+        'schwimmbad', 'camping', 'sportanlage', 'turnhalle'
+    }
+    # REMOVED from generic: 'volg', 'landi' — these are Swiss retail BRANDS
+
+    # --- FIX C: Legal suffixes to strip before scoring ---
+    LEGAL_SUFFIXES = r'\b(ag|gmbh|kg|sa|sarl|sàrl|inc|ltd|co|ohg|eg|se|mbh|lkg)\b'
+    # ADDED: 'lkg' (Lebensmittel-Konsumgenossenschaft)
+
+    def __init__(self, dynamic_gap_threshold=30):
         self.dynamic_gap_threshold = dynamic_gap_threshold
 
     def _normalize_text(self, text: str) -> str:
-        if not isinstance(text, str): return ""
-        text = text.lower().replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue').replace('ß', 'ss')
-        text = re.sub(r'\bstr\.\b', 'strasse', text)
-        text = text.replace('-', ' ')
-        text = re.sub(r'[^\w\s]', '', text)
-        return text.strip()
+        """Normalisiert Text für den Vergleich (Kleinschreibung, Umlaute, etc.)."""
+        if not text:
+            return ''
+        text = str(text).lower().strip()
+        # Umlaute ersetzen
+        text = text.replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue')
+        text = text.replace('é', 'e').replace('è', 'e').replace('ê', 'e')
+        text = text.replace('à', 'a').replace('â', 'a')
+        # Abkürzungen normalisieren
+        text = text.replace('str.', 'strasse').replace('str ', 'strasse ')
+        text = text.replace('g.', 'gasse')  # NEW: handle "g." abbreviation
+        # Bindestriche und Sonderzeichen
+        text = text.replace('-', ' ').replace('/', ' ')
+        # Mehrfache Leerzeichen entfernen
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
 
-    def _get_street_from_searchstring(self, search_string: str) -> str:
-        parts = str(search_string).split(',')
-        return parts[1].strip() if len(parts) > 1 else ""
+    def _strip_legal_suffixes(self, text: str) -> str:
+        """FIX C: Entfernt Rechtsform-Suffixe (AG, GmbH, KG, etc.) aus dem Text."""
+        cleaned = re.sub(self.LEGAL_SUFFIXES, '', text)
+        return re.sub(r'\s+', ' ', cleaned).strip()
 
-    def _has_street_in_searchstring(self, search_string: str) -> bool:
-        return bool(self._get_street_from_searchstring(search_string))
+    def _get_scoring_weights(self, first_word: str) -> tuple:
+        """FIX A: Returns (first_word_weight, full_title_weight) based on whether 
+        the first word is a generic category."""
+        if first_word in self.GENERIC_FIRST_WORDS:
+            # Generic word = flip the weights, rely on full title instead
+            return (0.30, 0.70)
+        else:
+            # Brand name first = original weights
+            return (0.70, 0.30)
 
-    def _get_core_search_name(self, search_string: str) -> str:
-        return str(search_string).split(',')[0].strip()
-    
-    def _calculate_scores(self, group_df):
-    #Berechnet Scores für einen DataFrame und gibt ihn mit einer 'score'-Spalte zurück."""
+    def _calculate_scores(self, group: pd.DataFrame) -> pd.DataFrame:
+        """Berechnet den gewichteten Ähnlichkeitsscore für jede Zeile in der Gruppe."""
+        if group.empty:
+            return group
+
+        search_name = group.iloc[0].get('SearchString', '')
+        # Extract the name part (before the first comma)
+        search_name_part = search_name.split(',')[0].strip() if search_name else ''
+        norm_search_name = self._normalize_text(search_name_part)
+
+        # FIX C: Strip legal suffixes from search name
+        norm_search_name = self._strip_legal_suffixes(norm_search_name)
+
+        # FIX A: Determine weights based on whether first word is generic
+        search_words = norm_search_name.split()
+        search_first_word = search_words[0] if search_words else ''
+        first_word_weight, full_title_weight = self._get_scoring_weights(search_first_word)
+
+        logger.debug(f"Scoring '{search_name_part}' | first_word='{search_first_word}' | "
+                     f"weights=({first_word_weight:.0%}/{full_title_weight:.0%}) | "
+                     f"generic={'YES' if first_word_weight == 0.30 else 'NO'}")
+
         scores = []
-        result_df = group_df.copy()
-        for index, row in result_df.iterrows():
-            search_string = row['SearchString']
-            google_title = str(row['title'])
-            
-            # Titel-Score
-            search_name_full = self._get_core_search_name(search_string)
-            norm_search_name = self._normalize_text(search_name_full)
+        for _, row in group.iterrows():
+            google_title = str(row.get('title', ''))
             norm_google_title = self._normalize_text(google_title)
-            search_core = norm_search_name.split()[0] if norm_search_name else ""
-            google_core = norm_google_title.split()[0] if norm_google_title else ""
-            core_name_score = fuzz.ratio(search_core, google_core)
-            full_title_score = fuzz.token_set_ratio(norm_search_name, norm_google_title)
-            title_score = (core_name_score * 0.7) + (full_title_score * 0.3)
-            scores.append(title_score)
-        
-        result_df['score'] = scores
-        return result_df
 
-    def clean_data(self, input_filepath: str, cleaned_ok_filepath: str, cleaned_review_filepath: str, rejected_filepath: str):
-        try:
-            logger.info("Starte finalen Datenbereinigungsprozess...")
-            df = pd.read_csv(input_filepath, sep=';', encoding='utf-8-sig', dtype=str).fillna('')
-            logger.debug(f"Die erste 5 Zeilen der Eingabedatei:\n{df.head()}")
+            # FIX C: Strip legal suffixes from google title too
+            norm_google_title = self._strip_legal_suffixes(norm_google_title)
 
-            final_ok_results = []
-            final_review_results = []
-            rejected_results = []
+            google_words = norm_google_title.split()
+            google_first_word = google_words[0] if google_words else ''
 
-            for kunden_nr, original_group in df.groupby('KundenNr'):
-                group = original_group.copy()
-                group['SearchString'] = group['SearchString'].fillna('')
-                group['title'] = group['title'].fillna('')
+            # Core comparison: first word vs first word
+            if search_first_word and google_first_word:
+                core_score = fuzz.ratio(search_first_word, google_first_word)
+            else:
+                core_score = 0
 
-                if len(group) == 1:
-                    group.loc[:, 'qualitaet'] = 'OK'
-                    final_ok_results.extend(group.to_dict('records'))
+            # Full title comparison
+            full_score = fuzz.token_set_ratio(norm_search_name, norm_google_title)
+
+            # FIX A: Apply dynamic weights
+            weighted_score = (first_word_weight * core_score) + (full_title_weight * full_score)
+
+            logger.debug(f"  vs '{google_title}' | core={core_score} full={full_score} "
+                         f"weighted={weighted_score:.1f}")
+
+            scores.append(round(weighted_score, 2))
+
+        group = group.copy()
+        group['score'] = scores
+        return group
+
+    def _has_street_in_searchstring(self, search_string: str) -> str:
+        """Prüft, ob im SearchString eine Straße enthalten ist (2. Komma-Teil)."""
+        parts = search_string.split(',')
+        if len(parts) >= 2:
+            street_part = parts[1].strip()
+            # Check it's not just a number or empty
+            if street_part and not street_part.isdigit():
+                return street_part
+        return ''
+
+    def _plz_matches(self, row: pd.Series, input_plz: str) -> bool:
+        """FIX B: Prüft ob die PLZ aus dem Google-Ergebnis mit der Input-PLZ übereinstimmt."""
+        google_plz = str(row.get('postalCode', '')).strip()
+        input_plz_clean = str(input_plz).strip()
+        if not google_plz or not input_plz_clean:
+            return True  # If either is missing, don't filter out
+        return google_plz == input_plz_clean
+
+    def clean_data(self, input_filepath: str) -> dict:
+        """
+        Hauptmethode zur Bereinigung der Daten.
+        Gibt ein Dict mit den Dateipfaden der Ergebnisdateien zurück.
+        """
+        logger.info(f"Starte Bereinigung der Datei: {input_filepath}")
+        df = pd.read_csv(input_filepath, sep=';', encoding='utf-8-sig', dtype=str).fillna('')
+
+        if 'KundenNr' not in df.columns:
+            raise ValueError("Die Spalte 'KundenNr' wurde nicht gefunden.")
+
+        unique_results = []    # -> _eindeutig.csv
+        review_results = []    # -> _zur_pruefung.csv
+        rejected_results = []  # -> _aussortiert.csv
+
+        grouped = df.groupby('KundenNr')
+        total_groups = len(grouped)
+        logger.info(f"Verarbeite {total_groups} Kundengruppen...")
+
+        for kunden_nr, group in grouped:
+            search_string = group.iloc[0].get('SearchString', '')
+            input_plz = str(group.iloc[0].get('PLZ', '')).strip()
+
+            # --- FIX B: PLZ pre-filter ---
+            plz_mask = group.apply(lambda row: self._plz_matches(row, input_plz), axis=1)
+            plz_matches = group[plz_mask]
+            plz_mismatches = group[~plz_mask]
+
+            if not plz_mismatches.empty:
+                logger.debug(f"KundenNr {kunden_nr}: {len(plz_mismatches)} Ergebnisse "
+                             f"mit falscher PLZ aussortiert")
+                for _, row in plz_mismatches.iterrows():
+                    row_dict = row.to_dict()
+                    row_dict['qualitaet'] = 'AUSSORTIERT (PLZ)'
+                    rejected_results.append(row_dict)
+
+            # If PLZ filter removed everything, send all to review
+            if plz_matches.empty:
+                logger.info(f"KundenNr {kunden_nr}: Keine PLZ-Treffer, zur Prüfung.")
+                for _, row in group.iterrows():
+                    row_dict = row.to_dict()
+                    row_dict['qualitaet'] = 'ZUR_PRUEFUNG (keine PLZ-Treffer)'
+                    review_results.append(row_dict)
+                continue
+
+            group = plz_matches  # Continue with PLZ-filtered results
+
+            # --- Nur 1 Ergebnis → Eindeutig ---
+            if len(group) == 1:
+                row_dict = group.iloc[0].to_dict()
+                row_dict['qualitaet'] = 'OK'
+                unique_results.append(row_dict)
+                continue
+
+            # --- Die "Weiche": Hat der SearchString eine Strasse? ---
+            street_to_find = self._has_street_in_searchstring(search_string)
+
+            processing_group = group  # Default: alle Ergebnisse werden gescored
+
+            if street_to_find:
+                # ---- SZENARIO B: Strasse vorhanden ----
+                norm_street_to_find = self._normalize_text(street_to_find)
+                logger.debug(f"KundenNr {kunden_nr}: Szenario B (Strasse: '{street_to_find}')")
+
+                street_matches_mask = group['street'].apply(
+                    lambda x: fuzz.partial_ratio(
+                        norm_street_to_find, self._normalize_text(str(x))
+                    ) > 90 if norm_street_to_find else False
+                )
+                street_matches = group[street_matches_mask]
+                street_mismatches = group[~street_matches_mask]
+
+                # Strassen-Fehlschläge aussortieren
+                if not street_mismatches.empty:
+                    for _, row in street_mismatches.iterrows():
+                        row_dict = row.to_dict()
+                        row_dict['qualitaet'] = 'AUSSORTIERT (Strasse)'
+                        rejected_results.append(row_dict)
+
+                if len(street_matches) == 0:
+                    # Keine Strassentreffer → alle zur Prüfung
+                    logger.info(f"KundenNr {kunden_nr}: Keine Strassentreffer, zur Prüfung.")
+                    for _, row in group.iterrows():
+                        row_dict = row.to_dict()
+                        row_dict['qualitaet'] = 'ZUR_PRUEFUNG (keine Strassentreffer)'
+                        review_results.append(row_dict)
                     continue
-
-                search_string = group.iloc[0]['SearchString']
-                
-                if self._has_street_in_searchstring(search_string):
-                    # SZENARIO B: Strasse hat Vorrang
-                    logger.debug(f"--- Szenario B für KundenNr {kunden_nr} ---")
-                    street_to_find = self._get_street_from_searchstring(search_string)
-                    norm_street_to_find = self._normalize_text(street_to_find)
-                    
-                    street_matches_mask = group['street'].apply(
-                        lambda x: fuzz.partial_ratio(norm_street_to_find, self._normalize_text(str(x))) > 90 if norm_street_to_find else False
-                    )
-                    street_matches = group[street_matches_mask]
-                    street_mismatches = group[~street_matches_mask]
-                    
-                    if street_matches.empty:
-                        logger.warning(f"Kein Strassen-Treffer für {kunden_nr}. Markiere alle Originale zur Prüfung.")
-                        group.loc[:, 'qualitaet'] = 'ZUR_PRUEFUNG'
-                        final_review_results.extend(group.to_dict('records'))
-                        continue
-                    
-                    rejected_results.extend(street_mismatches.to_dict('records'))
-                    processing_group = street_matches.copy()
+                elif len(street_matches) == 1:
+                    row_dict = street_matches.iloc[0].to_dict()
+                    row_dict['qualitaet'] = 'OK (Strasse)'
+                    unique_results.append(row_dict)
+                    continue
                 else:
-                    # SZENARIO A: Keine Strasse
-                    logger.debug(f"--- Szenario A für KundenNr {kunden_nr} ---")
-                    processing_group = group
+                    processing_group = street_matches
+            else:
+                logger.debug(f"KundenNr {kunden_nr}: Szenario A (keine Strasse)")
 
-                scored_group = self._calculate_scores(processing_group)
-                high_confidence_hits = scored_group[scored_group['score'] >= self.title_similarity_threshold]
-                low_confidence_hits = scored_group[scored_group['score'] < self.title_similarity_threshold]
+            # --- TITLE SCORING (both scenarios end up here) ---
+            scored_group = self._calculate_scores(processing_group)
 
-                if not high_confidence_hits.empty:
-                    high_confidence_hits = high_confidence_hits.copy()
-                    high_confidence_hits.loc[:, 'qualitaet'] = 'OK'
-                    final_ok_results.extend(high_confidence_hits.to_dict('records'))
-                    rejected_results.extend(low_confidence_hits.to_dict('records'))
-                else:
-                    sorted_low_hits = low_confidence_hits.sort_values(by='score', ascending=False)
-                    if len(sorted_low_hits) < 2:
-                        if not sorted_low_hits.empty:
-                            sorted_low_hits = sorted_low_hits.copy()
-                            sorted_low_hits.loc[:, 'qualitaet'] = 'ZUR_PRUEFUNG'
-                            final_review_results.extend(sorted_low_hits.to_dict('records'))
-                        continue
+            # --- Fester Schwellenwert: Score >= 80 ---
+            high_confidence_hits = scored_group[scored_group['score'] >= 80]
+            low_confidence_hits = scored_group[scored_group['score'] < 80]
 
+            if not high_confidence_hits.empty:
+                for _, row in high_confidence_hits.iterrows():
+                    row_dict = row.to_dict()
+                    row_dict['qualitaet'] = 'OK (Score)'
+                    unique_results.append(row_dict)
+                for _, row in low_confidence_hits.iterrows():
+                    row_dict = row.to_dict()
+                    row_dict['qualitaet'] = 'AUSSORTIERT (Score)'
+                    rejected_results.append(row_dict)
+            else:
+                # --- Dynamischer Schwellenwert ---
+                sorted_low_hits = low_confidence_hits.sort_values('score', ascending=False)
+
+                if len(sorted_low_hits) >= 2:
                     score_1 = sorted_low_hits.iloc[0]['score']
                     score_2 = sorted_low_hits.iloc[1]['score']
-                    
-                    if score_1 > 0 and (score_1 - score_2 >= self.dynamic_gap_threshold):
-                        winner = sorted_low_hits.head(1).copy()
-                        winner.loc[:, 'qualitaet'] = 'OK (Dynamischer Schwellenwert)'
-                        losers = sorted_low_hits.iloc[1:].copy()
-                        final_ok_results.extend(winner.to_dict('records'))
-                        rejected_results.extend(losers.to_dict('records'))
+
+                    if float(score_1) - float(score_2) >= self.dynamic_gap_threshold:
+                        best_hit = sorted_low_hits.iloc[0].to_dict()
+                        best_hit['qualitaet'] = 'OK (Dynamisch)'
+                        unique_results.append(best_hit)
+
+                        for _, row in sorted_low_hits.iloc[1:].iterrows():
+                            row_dict = row.to_dict()
+                            row_dict['qualitaet'] = 'AUSSORTIERT (Dynamisch)'
+                            rejected_results.append(row_dict)
+
+                        logger.info(f"KundenNr {kunden_nr}: Dynamischer Treffer "
+                                    f"(Score {score_1:.0f} vs {score_2:.0f})")
                     else:
-                        logger.warning(f"Auswahl unklar für KundenNr {kunden_nr} (Top Score: {score_1:.0f} vs {score_2:.0f}). Markiere relevante Gruppe zur Prüfung.")
-                        sorted_low_hits = sorted_low_hits.copy()
-                        sorted_low_hits.loc[:, 'qualitaet'] = 'ZUR_PRUEFUNG'
-                        final_review_results.extend(sorted_low_hits.to_dict('records'))
+                        # Gap zu klein → alle zur Prüfung
+                        for _, row in sorted_low_hits.iterrows():
+                            row_dict = row.to_dict()
+                            row_dict['qualitaet'] = 'ZUR_PRUEFUNG (kein klarer Treffer)'
+                            review_results.append(row_dict)
+                else:
+                    # Nur 1 Ergebnis mit niedrigem Score → zur Prüfung
+                    for _, row in sorted_low_hits.iterrows():
+                        row_dict = row.to_dict()
+                        row_dict['qualitaet'] = 'ZUR_PRUEFUNG (niedriger Score)'
+                        review_results.append(row_dict)
 
-            # Schreibe die drei finalen Dateien
-            all_cols = list(df.columns) + ['qualitaet']
-            for filepath, data_list, name in [
-                (cleaned_ok_filepath, final_ok_results, "Eindeutige"),
-                (cleaned_review_filepath, final_review_results, "Zur Prüfung"),
-                (rejected_filepath, rejected_results, "Aussortierte")
-            ]:
-                if data_list:
-                    df_to_write = pd.DataFrame(data_list)
-                    # Spaltenreihenfolge erzwingen
-                    cols_in_order = [col for col in all_cols if col in df_to_write.columns]
-                    df_to_write[cols_in_order].to_csv(filepath, sep=';', index=False, encoding='utf-8-sig')
-                    logger.info(f"{name} Ergebnisse erfolgreich gespeichert: '{filepath}'")
+        # --- Ergebnisse speichern ---
+        base_path = input_filepath.rsplit('.', 1)[0]
 
-        except Exception as e:
-            logger.error(f"Ein Fehler ist während der finalen Datenbereinigung aufgetreten: {e}", exc_info=True)
+        results = {}
+        for name, data in [('eindeutig', unique_results),
+                           ('zur_pruefung', review_results),
+                           ('aussortiert', rejected_results)]:
+            filepath = f"{base_path}_{name}.csv"
+            out_df = pd.DataFrame(data)
+
+            # Drop internal score column from final output
+            if 'score' in out_df.columns:
+                out_df = out_df.drop(columns=['score'])
+
+            out_df.to_csv(filepath, sep=';', index=False, encoding='utf-8-sig')
+            results[name] = filepath
+            logger.info(f"{name}: {len(data)} Einträge → {filepath}")
+
+        return results

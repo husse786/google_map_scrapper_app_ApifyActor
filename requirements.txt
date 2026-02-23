@@ -3,3 +3,4 @@ requests
 apify-client
 thefuzz
 python-levenshtein
+python-dotenv

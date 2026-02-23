@@ -1,11 +1,22 @@
 # config.template.py
-# Zentrale Konfigurationsdatei zur Speicherung von API-Schlüsseln und Einstellungen.
+# Zentrale Konfigurationsdatei zur Speicherung von Einstellungen.
+# Sensible Daten (API-Token etc.) werden aus der .env Datei geladen.
+#
+# SETUP:
+# 1. Erstelle eine Datei namens '.env' im Projektordner mit folgendem Inhalt:
+#    APIFY_API_TOKEN=dein_echter_token_hier
+#    ACTOR_ID=deine_actor_id_hier
+# 2. Kopiere diese Datei als 'config.py'
 
-# WICHTIG: Ersetze "DEIN_APIFY_API_TOKEN" durch deinen echten API-Token von Apify.
-APIFY_API_TOKEN = "Dein Apify API Token hier"
+import os
+from dotenv import load_dotenv
 
-# Die ID des Google Maps Scraper Actors. Diese findest du auf der Apify-Seite des Actors.
-ACTOR_ID = "Dein Actor ID hier"
+# Lade Umgebungsvariablen aus der .env-Datei
+load_dotenv()
+
+# API-Token und Actor-ID aus Umgebungsvariablen lesen
+APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN", "DEIN_APIFY_API_TOKEN")
+ACTOR_ID = os.getenv("ACTOR_ID", "DEIN_ACTOR_ID")
 
 # Standard-Input-Parameter für den Apify Actor.
 # Diese werden für jeden Lauf als Basis verwendet und dann mit den
