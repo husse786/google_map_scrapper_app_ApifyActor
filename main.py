@@ -1,218 +1,295 @@
 # main.py
 # Main App. Verbindet UI, CSV-Verarbeitung und den API-Client.
+#
+# Ablauf:
+#   Schritt 0: Vorverarbeitung  → prüft Vollständigkeit der Input-Daten
+#   Schritt 1: Anreichern       → sendet vollständige Daten an Google Maps API
+#   Schritt 2: Bereinigen       → wertet API-Ergebnisse qualitativ aus
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
-import threading
+from tkinter import filedialog
 from pathlib import Path
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
-# Importiere unsere eigenen Module
-from ui_manager import AppUI # UI-Manager-Klasse
-from csv_processor import CSVProcessor # CSV-Verarbeitungs-Klasse
-from apify_wrapper import ApifyClientWrapper # API-Client-Wrapper
-from csv_postprocessor import CSVPostProcessor # Importiere die neue Post-Processing-Klasse
-from data_cleaner import DataCleaner # Importiere die DataCleaner-Klasse
 import config
-from logger_config import logger # Importiere den Logger
+from ui_manager import AppUI
+from csv_processor import CSVProcessor
+from apify_wrapper import ApifyClientWrapper
+from csv_postprocessor import CSVPostProcessor
+from data_cleaner import DataCleaner
+from data_preprocessor import DataPreprocessor
 
-# HILFSKLASSE für die UI-Log-Umleitung
-# --- DIE KORREKTUR IST HIER: class TextHandler(logging.Handler): ---
+logger = logging.getLogger(__name__)
+
+# Spalten, die in der optimierten Ausgabedatei behalten werden
+COLUMNS_TO_KEEP = [
+    'SearchString', 'PLZ', 'Stadt', 'KundenNr',
+    'title', 'address', 'street', 'postalCode', 'city',
+    'openingHours', 'phone', 'phoneUnformatted', 'website',
+    'permanentlyClosed', 'temporarilyClosed', 'cid', 'placeId', 'location'
+]
+
+
 class TextHandler(logging.Handler):
-    """
-    Ein Logging-Handler, der Log-Nachrichten in ein Tkinter Text-Widget schreibt.
-    Erbt von logging.Handler, um alle notwendigen Methoden zu erhalten.
-    """
+    """Logging-Handler, der Nachrichten ins Tkinter-ScrolledText-Widget schreibt."""
     def __init__(self, text_widget):
-        # Rufe den Konstruktor der Elternklasse auf
         super().__init__()
         self.text_widget = text_widget
 
     def emit(self, record):
-        """Sendet einen Log-Eintrag an das Text-Widget."""
         msg = self.format(record)
-        # after() wird verwendet, um den UI-Aufruf im Hauptthread sicherzustellen
-        self.text_widget.after(0, self.append_message, msg)
+        self.text_widget.after(0, self._append, msg)
 
-    def append_message(self, msg):
-        """Fügt die Nachricht an das Text-Widget an."""
-        self.text_widget.config(state=tk.NORMAL)
+    def _append(self, msg):
+        self.text_widget.config(state='normal')
         self.text_widget.insert(tk.END, msg + '\n')
         self.text_widget.see(tk.END)
-        self.text_widget.config(state=tk.DISABLED)
+        self.text_widget.config(state='disabled')
 
-class MainApplication:
-    """
-    Die Hauptklasse der Anwendung, die alle Komponenten koordiniert.
-    """
+
+class GoogleMapsScraper:
+    """Hauptklasse: Verbindet UI mit der Geschäftslogik."""
+
     def __init__(self, root):
-        self.root = root
-        self.processor = CSVProcessor()
-        self.post_processor = CSVPostProcessor()  # Initialisiere die Post-Processing-Klasse
-        self.cleaner = DataCleaner()  # Initialisiere die DataCleaner-Klasse
+        self.ui = AppUI(root)
 
-        if "DEIN_APIFY_API_TOKEN" in config.APIFY_API_TOKEN:
-            self.show_error_and_exit("API-Token fehlt!", "Bitte trage deinen API-Token in die config.py Datei ein.")
-            return
+        # Logging ins UI-Fenster umleiten
+        text_handler = TextHandler(self.ui.log_display)
+        text_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+                                                     datefmt='%Y-%m-%d %H:%M:%S'))
+        logging.getLogger().addHandler(text_handler)
+        logging.getLogger().setLevel(logging.INFO)
 
+        # Module initialisieren
+        self.csv_processor = CSVProcessor()
         self.api_client = ApifyClientWrapper(config.APIFY_API_TOKEN, config.ACTOR_ID)
-        
-        self.ui = AppUI(root, 
-                upload_callback=self.start_processing_thread,
-                clean_callback=self.start_cleaning_thread)
-        
-        # Leite Logs in die UI um
-        log_handler = TextHandler(self.ui.log_text)
-        # Setze ein Format für den UI-Handler, damit keine Zeitstempel in der UI erscheinen
-        log_handler.setFormatter(logging.Formatter('%(message)s'))
-        logger.addHandler(log_handler)
-        
-        self.ui.set_status("Bereit. Bitte eine CSV-Datei zum Hochladen auswählen.")
+        self.post_processor = CSVPostProcessor()
+        self.cleaner = DataCleaner()
+        self.preprocessor = DataPreprocessor()
 
-    def show_error_and_exit(self, title, message):
-        """Zeigt ein Fehlerfenster an und beendet die Anwendung."""
-        messagebox.showerror(title, message)
-        self.root.destroy()
+        # Buttons mit Funktionen verknüpfen
+        self.ui.preprocess_button.config(command=self.start_preprocessing)
+        self.ui.upload_button.config(command=self.start_enrichment)
+        self.ui.clean_button.config(command=self.start_cleaning)
 
-    def start_processing_thread(self):
-        """Öffnet den Dateidialog und startet den Verarbeitungsprozess in einem neuen Thread."""
+    # ==========================================================================
+    # Buttons deaktivieren/aktivieren
+    # ==========================================================================
+
+    def _disable_all_buttons(self):
+        self.ui.preprocess_button.config(state=tk.DISABLED)
+        self.ui.upload_button.config(state=tk.DISABLED)
+        self.ui.clean_button.config(state=tk.DISABLED)
+
+    def _enable_all_buttons(self):
+        self.ui.preprocess_button.config(state=tk.NORMAL)
+        self.ui.upload_button.config(state=tk.NORMAL)
+        self.ui.clean_button.config(state=tk.NORMAL)
+
+    # ==========================================================================
+    # SCHRITT 0: Vorverarbeitung
+    # ==========================================================================
+
+    def start_preprocessing(self):
         filepath = filedialog.askopenfilename(
-            title="CSV Queldatei für Anreicherung auswählen",
-            filetypes=(("CSV Files", "*.csv"), ("All files", "*.*"))
+            title="Input-Datei für Vorverarbeitung auswählen",
+            filetypes=[("CSV Dateien", "*.csv")],
+            initialdir="./Daten"
         )
-        if not filepath:
-            self.ui.set_status("Vorgang abgebrochen.")
-            return
-        # Starte Anreichernungsprozess in einem Thread.
-        processing_thread = threading.Thread(target=self.process_file, args=(filepath,))
-        processing_thread.start()
-    
+        if filepath:
+            thread = threading.Thread(target=self.process_preprocessing, args=(filepath,))
+            thread.daemon = True
+            thread.start()
 
-    def start_cleaning_thread(self):
-        """Öffnet den Dateidialog und startet den Bereinigungsprozess in einem neuen Thread."""
+    def process_preprocessing(self, filepath: str):
+        try:
+            self._disable_all_buttons()
+            self.ui.set_status(f"Vorverarbeitung: {Path(filepath).name}...")
+
+            logger.info("================================")
+            logger.info(f"Starte Vorverarbeitung für: {Path(filepath).name}")
+
+            results = self.preprocessor.preprocess(str(filepath))
+
+            stats = results['stats']
+            logger.info("================================")
+            logger.info("Vorverarbeitung abgeschlossen!")
+            logger.info(f"  Total:          {stats['total']} Kunden")
+            logger.info(f"  Vollständig:    {stats['complete']} → {Path(results['vollstaendig']).name}")
+            logger.info(f"  Unvollständig:  {stats['incomplete']} → {Path(results['unvollstaendig']).name}")
+            logger.info("================================")
+
+            if stats['incomplete'] > 0:
+                logger.info(f"⚠️  {stats['incomplete']} Kunden haben unvollständige Daten.")
+                logger.info("   Bitte die Datei '_unvollstaendig.csv' manuell korrigieren.")
+            logger.info("Nächster Schritt: Die '_vollstaendig.csv' Datei in Schritt 1 (Anreichern) verwenden.")
+
+        except Exception as e:
+            logger.critical(f"Fehler bei der Vorverarbeitung: {e}")
+        finally:
+            self.ui.set_status("Bereit.")
+            self._enable_all_buttons()
+
+    # ==========================================================================
+    # SCHRITT 1: Anreichern (Google Maps API)
+    # ==========================================================================
+
+    def start_enrichment(self):
         filepath = filedialog.askopenfilename(
-            title="2. Optimierte Datei zur Bereinigung auswählen", 
-            filetypes=(("CSV Files", "*.csv"),)
+            title="CSV-Datei zum Anreichern auswählen",
+            filetypes=[("CSV Dateien", "*.csv")],
+            initialdir="./Daten"
         )
-        if not filepath:
-            self.ui.set_status("Bereinigung abgebrochen.")
-            return
-        threading.Thread(target=self.process_cleaning, args=(filepath,)).start()
+        if filepath:
+            thread = threading.Thread(target=self.process_enrichment, args=(filepath,))
+            thread.daemon = True
+            thread.start()
+
+    def process_enrichment(self, filepath: str):
+        """
+        Führt die Anreicherung über die Google Maps API im Hintergrund aus.
+
+        Ablauf:
+        1. CSV laden und validieren              → CSVProcessor.load_and_validate()
+        2. Pro gültige Zeile die API abfragen    → ApifyClientWrapper.run_scraper_and_get_results()
+        3. Input + API-Ergebnisse kombinieren und als Rohdaten speichern → CSVProcessor.write_csv()
+        4. Spalten filtern → optimierte Datei    → CSVPostProcessor.process_and_filter()
+        """
+        try:
+            self._disable_all_buttons()
+            self.ui.set_status(f"Anreichern: {Path(filepath).name}...")
+
+            logger.info("================================")
+            logger.info(f"Starte Anreicherung für: {Path(filepath).name}")
+
+            # Schritt 1: CSV laden und validieren
+            valid_rows, invalid_rows = self.csv_processor.load_and_validate(str(filepath))
+
+            if invalid_rows:
+                logger.warning(f"{len(invalid_rows)} ungültige Zeilen übersprungen.")
+            if not valid_rows:
+                logger.error("Keine gültigen Zeilen gefunden. Abbruch.")
+                return
+
+            logger.info(f"{len(valid_rows)} gültige Suchbegriffe gefunden.")
+
+            # Schritt 2: Pro Zeile die API abfragen und Ergebnisse mit Input kombinieren
+            all_combined_rows = []
+            total = len(valid_rows)
+
+            for i, row in enumerate(valid_rows, 1):
+                search_string = row.get('SearchString', '')
+                postal_code = row.get('PLZ', '')
+
+                logger.info(f"  [{i}/{total}] Suche: {search_string}")
+
+                try:
+                    api_results = self.api_client.run_scraper_and_get_results(
+                        search_string, postal_code
+                    )
+                    logger.info(f"  [{i}/{total}] → {len(api_results)} Ergebnisse erhalten")
+
+                    if api_results:
+                        # Jedes API-Ergebnis mit den Input-Daten kombinieren
+                        for result in api_results:
+                            combined = {
+                                'SearchString': row.get('SearchString', ''),
+                                'PLZ': row.get('PLZ', ''),
+                                'Stadt': row.get('Stadt', ''),
+                                'KundenNr': row.get('KundenNr', '')
+                            }
+                            combined.update(result)
+                            all_combined_rows.append(combined)
+                    else:
+                        # Keine Ergebnisse → leere Zeile mit Input-Daten
+                        all_combined_rows.append({
+                            'SearchString': row.get('SearchString', ''),
+                            'PLZ': row.get('PLZ', ''),
+                            'Stadt': row.get('Stadt', ''),
+                            'KundenNr': row.get('KundenNr', '')
+                        })
+
+                except Exception as e:
+                    logger.error(f"  [{i}/{total}] Fehler bei API-Abfrage: {e}")
+                    all_combined_rows.append({
+                        'SearchString': row.get('SearchString', ''),
+                        'PLZ': row.get('PLZ', ''),
+                        'Stadt': row.get('Stadt', ''),
+                        'KundenNr': row.get('KundenNr', '')
+                    })
+
+            # Schritt 3: Rohdaten speichern
+            base_path = str(filepath).rsplit('.', 1)[0]
+            raw_filepath = f"{base_path}_angereicherte_daten.csv"
+            optimized_filepath = f"{base_path}_optimierte_daten.csv"
+
+            self.csv_processor.write_csv(raw_filepath, all_combined_rows)
+
+            # Schritt 4: Spalten filtern → optimierte Datei
+            self.post_processor.process_and_filter(
+                raw_filepath, optimized_filepath, COLUMNS_TO_KEEP
+            )
+
+            logger.info("================================")
+            logger.info("Anreicherung abgeschlossen!")
+            logger.info(f"  Rohdaten:    {Path(raw_filepath).name}")
+            logger.info(f"  Optimiert:   {Path(optimized_filepath).name}")
+            logger.info("Nächster Schritt: Die optimierte Datei in Schritt 2 (Bereinigen) verwenden.")
+            logger.info("================================")
+
+        except Exception as e:
+            logger.critical(f"Fehler bei der Anreicherung: {e}")
+        finally:
+            self.ui.set_status("Bereit.")
+            self._enable_all_buttons()
+
+    # ==========================================================================
+    # SCHRITT 2: Bereinigen
+    # ==========================================================================
+
+    def start_cleaning(self):
+        filepath = filedialog.askopenfilename(
+            title="Angereicherte Datei zum Bereinigen auswählen",
+            filetypes=[("CSV Dateien", "*.csv")],
+            initialdir="./Daten"
+        )
+        if filepath:
+            thread = threading.Thread(target=self.process_cleaning, args=(filepath,))
+            thread.daemon = True
+            thread.start()
 
     def process_cleaning(self, filepath: str):
-        """Führt den Bereinigungsprozess im Hintergrund aus."""
         try:
-            self.ui.upload_button.config(state=tk.DISABLED)
-            self.ui.clean_button.config(state=tk.DISABLED)
+            self._disable_all_buttons()
             self.ui.set_status(f"Bereinige Datei: {Path(filepath).name}...")
-            logger.info("--------------------------------")
+
+            logger.info("================================")
             logger.info(f"Starte Bereinigung für: {Path(filepath).name}")
 
             results = self.cleaner.clean_data(str(filepath))
 
             logger.info("================================")
             logger.info("Bereinigung abgeschlossen!")
-            logger.info(f"  Eindeutig:      {results.get('eindeutig', 'N/A')}")
-            logger.info(f"  Zur Prüfung:    {results.get('zur_pruefung', 'N/A')}")
-            logger.info(f"  Aussortiert:     {results.get('aussortiert', 'N/A')}")
+            logger.info(f"  Eindeutig:      {Path(results.get('eindeutig', 'N/A')).name}")
+            logger.info(f"  Zur Prüfung:    {Path(results.get('zur_pruefung', 'N/A')).name}")
+            logger.info(f"  Aussortiert:     {Path(results.get('aussortiert', 'N/A')).name}")
             if 'erneut_crawlen' in results:
-                logger.info(f"  Erneut Crawlen: {results.get('erneut_crawlen')}")
+                logger.info(f"  Erneut Crawlen: {Path(results['erneut_crawlen']).name}")
                 logger.info("  → Diese Datei kann direkt in Schritt 1 (Anreichern) verwendet werden.")
             logger.info("================================")
 
         except Exception as e:
-            logger.critical(f"Ein kritischer Fehler ist bei der Bereinigung aufgetreten: {e}")
+            logger.critical(f"Fehler bei der Bereinigung: {e}")
         finally:
             self.ui.set_status("Bereit.")
-            self.ui.upload_button.config(state=tk.NORMAL)
-            self.ui.clean_button.config(state=tk.NORMAL)
-    def _enrich_worker(self, i, total_valid, row):
-        """Führt die API-Anreicherung für eine einzelne Zeile aus (wird von einem Thread aufgerufen)."""
-        search_string = str(row.get("SearchString", ""))
-        plz = str(row.get("PLZ", ""))
-        
-        # UI-Update muss sicher über das Hauptfenster laufen
-        self.root.after(0, self.ui.set_status, f"Verarbeite Zeile {i+1}/{total_valid}: {search_string}")
-        
-        api_results = self.api_client.run_scraper_and_get_results(search_string, plz)
-        
-        logger.info(f"-> Zeile {i+1}/{total_valid}: '{search_string}' - {len(api_results)} Ergebnis(se) von Apify erhalten.")
-        
-        # Gib die Original-Zeile UND das API-Ergebnis zurück
-        return row, api_results
+            self._enable_all_buttons()
 
-    def process_file(self, filepath: str):
-            """Die Hauptlogik, die den Anreicherungsprozess parallel steuert."""
-            try:
-                self.ui.upload_button.config(state=tk.DISABLED)
-                self.ui.clean_button.config(state=tk.DISABLED)
-                self.ui.set_status(f"Verarbeite Datei: {Path(filepath).name}...")
-                logger.info("--------------------------------")
-                logger.info(f"Datei '{Path(filepath).name}' wird verarbeitet...")
 
-                valid_data, invalid_data = self.processor.load_and_validate(filepath)
-                logger.info(f"{len(valid_data)} gültige und {len(invalid_data)} ungültige Zeilen gefunden.")
-
-                output_dir = Path(filepath).parent
-                input_filename_base = Path(filepath).stem
-
-                if invalid_data:
-                    invalid_filepath = output_dir / f"{input_filename_base}_fehlende_daten.csv"
-                    self.processor.write_csv(str(invalid_filepath), invalid_data)
-                    logger.info(f"Ungültige Zeilen wurden in '{invalid_filepath.name}' gespeichert.")
-
-                enriched_results = []
-                
-                # --- START DER PARALLELEN VERARBEITUNG ---
-                # Wir erstellen einen Pool mit 4 Worker-Threads.
-                with ThreadPoolExecutor(max_workers=4) as executor:
-                    # Wir übergeben alle Aufgaben an den Pool.
-                    # Jede Aufgabe ist ein Aufruf unserer _enrich_worker-Funktion.
-                    futures = [executor.submit(self._enrich_worker, i, len(valid_data), row) 
-                            for i, row in enumerate(valid_data)]
-
-                    # Wir warten auf die Ergebnisse, sobald sie eintreffen.
-                    for future in as_completed(futures):
-                        original_row, api_results = future.result()
-                        
-                        # Logik zum Zusammenführen der Ergebnisse (wie vorher)
-                        if not api_results:
-                            enriched_results.append(original_row)
-                        else:
-                            for result in api_results:
-                                new_row = original_row.copy()
-                                new_row.update(result)
-                                enriched_results.append(new_row)
-                # --- ENDE DER PARALLELEN VERARBEITUNG ---
-
-                if enriched_results:
-                    enriched_filepath = output_dir / f"{input_filename_base}_angereicherte_daten.csv"
-                    self.processor.write_csv(str(enriched_filepath), enriched_results)
-                    logger.info("\nRohdaten-Anreicherung abgeschlossen!")
-                    logger.info(f"Alle angereicherten Rohdaten wurden in '{enriched_filepath.name}' gespeichert.")
-                    
-                    optimierte_filepath = output_dir / f"{input_filename_base}_optimierte_daten.csv"
-                    self.post_processor.process_and_filter(
-                        input_filepath=str(enriched_filepath),
-                        output_filepath=str(optimierte_filepath),
-                        columns_to_keep=config.FINAL_COLUMNS
-                    )
-                else:
-                    logger.info("\nVerarbeitung abgeschlossen, aber keine Daten zum Speichern vorhanden.")
-
-            except Exception as e:
-                logger.critical(f"\nEin kritischer Fehler ist aufgetreten: {e}")
-                messagebox.showerror("Kritischer Fehler", f"Ein unerwarteter Fehler ist aufgetreten:\n{e}")
-            finally:
-                self.ui.set_status("Bereit. Bitte eine Datei auswählen.")
-                self.ui.upload_button.config(state=tk.NORMAL)
-                self.ui.clean_button.config(state=tk.NORMAL)
-    def run(self):
-        """Startet die Haupt-Event-Loop der Anwendung."""
-        self.root.mainloop()
-
+# ==========================================================================
+# APP STARTEN
+# ==========================================================================
 if __name__ == "__main__":
-    main_root = tk.Tk()
-    app = MainApplication(main_root)
-    app.run()
+    root = tk.Tk()
+    app = GoogleMapsScraper(root)
+    root.mainloop()
