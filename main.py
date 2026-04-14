@@ -11,6 +11,7 @@ from tkinter import filedialog
 from pathlib import Path
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
 from ui_manager import AppUI
@@ -174,11 +175,13 @@ class GoogleMapsScraper:
 
             logger.info(f"{len(valid_rows)} gültige Suchbegriffe gefunden.")
 
-            # Schritt 2: Pro Zeile die API abfragen und Ergebnisse mit Input kombinieren
+            # Schritt 2: Pro Zeile die API abfragen (parallel mit 2 Workern)
             all_combined_rows = []
             total = len(valid_rows)
 
-            for i, row in enumerate(valid_rows, 1):
+            def process_row(index_row):
+                """Worker-Funktion: Verarbeitet eine einzelne Zeile."""
+                i, row = index_row
                 search_string = row.get('SearchString', '')
                 postal_code = row.get('PLZ', '')
 
@@ -190,6 +193,7 @@ class GoogleMapsScraper:
                     )
                     logger.info(f"  [{i}/{total}] → {len(api_results)} Ergebnisse erhalten")
 
+                    combined_results = []
                     if api_results:
                         # Jedes API-Ergebnis mit den Input-Daten kombinieren
                         for result in api_results:
@@ -200,24 +204,43 @@ class GoogleMapsScraper:
                                 'KundenNr': row.get('KundenNr', '')
                             }
                             combined.update(result)
-                            all_combined_rows.append(combined)
+                            combined_results.append(combined)
                     else:
                         # Keine Ergebnisse → leere Zeile mit Input-Daten
-                        all_combined_rows.append({
+                        combined_results.append({
                             'SearchString': row.get('SearchString', ''),
                             'PLZ': row.get('PLZ', ''),
                             'Stadt': row.get('Stadt', ''),
                             'KundenNr': row.get('KundenNr', '')
                         })
 
+                    return combined_results
+
                 except Exception as e:
                     logger.error(f"  [{i}/{total}] Fehler bei API-Abfrage: {e}")
-                    all_combined_rows.append({
+                    return [{
                         'SearchString': row.get('SearchString', ''),
                         'PLZ': row.get('PLZ', ''),
                         'Stadt': row.get('Stadt', ''),
                         'KundenNr': row.get('KundenNr', '')
-                    })
+                    }]
+
+            # Parallele Verarbeitung mit 6 Workern
+            logger.info("Starte parallele Verarbeitung mit 6 Workern...")
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                # Submit alle Tasks
+                futures = {
+                    executor.submit(process_row, (i, row)): i
+                    for i, row in enumerate(valid_rows, 1)
+                }
+
+                # Collect results as they complete
+                for future in as_completed(futures):
+                    try:
+                        results = future.result()
+                        all_combined_rows.extend(results)
+                    except Exception as e:
+                        logger.error(f"Worker-Fehler: {e}")
 
             # Schritt 3: Rohdaten speichern
             base_path = str(filepath).rsplit('.', 1)[0]

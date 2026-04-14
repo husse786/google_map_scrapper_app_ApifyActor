@@ -36,14 +36,14 @@ class ApifyClientWrapper:
             return []
 
         logger.info(f"\nStarte Scraper für: '{search_string}' in PLZ '{postal_code}'...")
-        
+
         try:
             run_input = copy.deepcopy(config.DEFAULT_ACTOR_INPUT) # Kopiere den Standard-Input
-            run_input["searchStringsArray"] = [search_string] # Setze den Suchstring
-            run_input["postalCode"] = str(postal_code) # Setze die PLZ
+            run_input["searchStringsArray"] = [search_string] # Setze den Suchstring (vollständig mit Strasse, PLZ, Stadt)
+            run_input["postalCode"] = str(postal_code) # Setze die PLZ (separat für Apify filtering)
 
             run = self.actor.call(run_input=run_input)
-            
+
             logger.info(f"Lauf für '{search_string}' beendet. Lade Ergebnisse...")
 
             results = list(self.client.dataset(run["defaultDatasetId"]).iterate_items())
