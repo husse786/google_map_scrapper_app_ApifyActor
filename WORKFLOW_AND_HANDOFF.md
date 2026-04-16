@@ -1,12 +1,13 @@
 # Google Maps Scraper - Complete Workflow & Handoff Guide
 
 **Project:** Enrich Zweifel Pomy Chips customer database with Google Maps data  
-**Status:** In production (batch 3 & 4 complete, batch 5 pending)  
+**Status:** Batches 1-4 complete & consolidated, batch 5 pending (night run)  
 **Last Updated:** 2026-04-14
 
 ---
 
 ## 📋 Table of Contents
+
 1. [Project Overview](#project-overview)
 2. [Complete 3-Step Workflow](#complete-3-step-workflow)
 3. [Architecture & Modules](#architecture--modules)
@@ -24,27 +25,36 @@
 
 **Goal:** Automatically match customer records with their Google Maps profiles to enrich data (phone, address, opening hours, website).
 
-**Why 3 Steps?**
+**Why 4 Steps?**
+
 - Step 0: Validate input completeness
 - Step 1: Call Google Maps API (via Apify) to get business profiles
 - Step 2: Intelligently deduplicate & score results to pick the RIGHT match
+- Step 3: Consolidate all batch outputs into master export files
 
 **Data Flow:**
-```
+
+```md
 Raw CSV (7,539 customers)
   ↓
 [Step 0: Preprocess] → Split into complete/incomplete
   ↓
-Complete file (7,539 customers)
+Complete file (7,539 customers) → split into batch_N/ folders
   ↓
 [Step 1: Enrich] → Call Apify (1 customer = N results) → Raw enriched CSV
   ↓
-[Step 2: Clean] → Score & deduplicate → 4 output files
+[Step 2: Clean] → Score & deduplicate → 4 output files per batch
   ↓
-eindeutig.csv (auto-accept) → Ready for DB
+eindeutig.csv (auto-accept)
 zur_pruefung.csv (needs manual review)
 aussortiert.csv (rejected)
 erneut_crawlen.csv (empty, retry)
+  ↓
+[Step 3: Zusammenführen] → Merge all batch outputs
+  ↓
+consolidated_batch_X_Y/eindeutig_batch_X_Y.csv        → Ready for DB
+consolidated_batch_X_Y/zur_pruefung_batch_X_Y.csv     → Manual review
+consolidated_batch_X_Y/eindeutig_allcolumns_batch_X_Y.csv → Full columns for DB
 ```
 
 ---
@@ -59,12 +69,14 @@ erneut_crawlen.csv (empty, retry)
 **Input format:** CSV with columns: `SearchString`, `PLZ`, `KundenNr`
 
 **SearchString format:**
-```
+
+```md
 "Title, Strasse+Nr, PLZ Stadt"
 Example: "Denner, Hauptstrasse 5, 5620 Bremgarten"
 ```
 
 **Output:**
+
 - `_vollstaendig.csv` (ready for Step 1)
 - `_unvollstaendig.csv` (needs manual fix)
 
@@ -80,6 +92,7 @@ Example: "Denner, Hauptstrasse 5, 5620 Bremgarten"
 **Input:** `_vollstaendig.csv` (one customer per row)
 
 **Process:**
+
 1. Read customer record (SearchString, PLZ)
 2. Call Apify actor with:
    - `searchStringsArray`: [full SearchString]
@@ -92,6 +105,7 @@ Example: "Denner, Hauptstrasse 5, 5620 Bremgarten"
 **Parallelization:** 6 workers (ThreadPoolExecutor) for concurrent API calls
 
 **Current Configuration (config.py):**
+
 ```python
 DEFAULT_ACTOR_INPUT = {
     "countryCode": "ch",
@@ -107,6 +121,7 @@ DEFAULT_ACTOR_INPUT = {
 ```
 
 **Key Rules:**
+
 - ✅ Keep original SearchString format (don't modify)
 - ✅ Set postalCode separately (helps Apify narrow results)
 - ✅ 6 parallel workers (tested stable)
@@ -124,21 +139,25 @@ DEFAULT_ACTOR_INPUT = {
 **5-Stage Decision Tree:**
 
 #### **Stage 1: Empty Results**
+
 - Detects when Apify returned no data
 - Action: → `_erneut_crawlen.csv` (retry later in Step 1)
 - Current: Very rare (2 empty per 2,513)
 
 #### **Stage 2: Postal Code Filter**
+
 - Removes results with wrong PLZ
 - Rule: Input PLZ must match Google PLZ exactly
 - Benefit of Doubt: If either is missing, pass through
 - Action: Mismatch → `_aussortiert.csv`
 
 #### **Stage 3: Single Result**
+
 - If only 1 result remains after PLZ filter
 - Action: → `_eindeutig.csv` (auto-accept)
 
 #### **Stage 4: The "Weiche" (Switch) - Street Matching**
+
 - **If street IS in SearchString** (Szenario B):
   - Extract street name & house number
   - Compare against Google results
@@ -155,6 +174,7 @@ DEFAULT_ACTOR_INPUT = {
   - Skip street matching, all results → Stage 5
 
 #### **Stage 5: Title Scoring**
+
 - Compares SearchString name against Google title
 - Normalization applied (umlauts, abbreviations, legal suffixes):
   - ä→ae, ö→oe, ü→ue
@@ -177,14 +197,16 @@ DEFAULT_ACTOR_INPUT = {
     - Gap <30 or only 1 result → `_zur_pruefung.csv`
 
 **Output Files:**
-| File | Meaning | Action |
-|------|---------|--------|
+|File | Meaning | Action |
+
+| ------ | --------- | -------- |
 | `_eindeutig.csv` | Auto-accepted ✅ | Import directly to DB |
 | `_zur_pruefung.csv` | Manual review 🔄 | User decides |
 | `_aussortiert.csv` | Rejected ❌ | Don't use |
 | `_erneut_crawlen.csv` | Empty/retry ⏱️ | Re-run Step 1 |
 
 **Key Rules:**
+
 - ✅ **Exact matches only** (no fuzzy approximations for house numbers)
 - ✅ **Conservative approach** (when in doubt → manual review)
 - ✅ **Precision over recall** (high accuracy > high volume)
@@ -195,18 +217,20 @@ DEFAULT_ACTOR_INPUT = {
 ## Architecture & Modules
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `main.py` | Orchestrates entire workflow, UI threading |
-| `ui_manager.py` | Tkinter GUI (3 buttons + log window) |
+| `ui_manager.py` | Tkinter GUI (4 buttons + log window) |
 | `config.py` | Apify credentials, actor config, parameters |
 | `data_preprocessor.py` | Step 0: Validates SearchString completeness |
 | `csv_processor.py` | Loads, validates, writes CSV files |
 | `apify_wrapper.py` | API client for Apify calls |
 | `csv_postprocessor.py` | Filters output columns |
 | `data_cleaner.py` | Step 2: Scoring & deduplication logic |
+| `data_consolidator.py` | Step 3: Merges all batch outputs into master files |
 | `logger_config.py` | Logging setup |
 
 **Key Implementation Detail:** 6 parallel workers in Step 1
+
 ```python
 with ThreadPoolExecutor(max_workers=6) as executor:
     futures = {executor.submit(process_row, row): i for i, row in enumerate(rows)}
@@ -221,6 +245,7 @@ with ThreadPoolExecutor(max_workers=6) as executor:
 See `ALGORITHM_EXPLAINED.md` for detailed explanation with examples.
 
 **TL;DR:**
+
 1. Empty? → Retry
 2. Wrong PLZ? → Reject
 3. 1 result? → Auto-accept
@@ -232,74 +257,130 @@ See `ALGORITHM_EXPLAINED.md` for detailed explanation with examples.
 ## Current Results Summary
 
 ### Batch 1 (10 customers - test)
+
 | Category | Customers | % |
-|----------|-----------|-----|
+| ---------- | ----------- | ----- |
 | Eindeutig | 7 | 70% |
 | Zur_pruefung | 1 | 10% |
 | Aussortiert | 0 | 0% |
 | Erneut_crawlen | 2 | 20% |
 
 ### Batch 2 (50 customers - test)
+
 | Category | Customers | % |
-|----------|-----------|-----|
+| ---------- | ----------- | ----- |
 | Eindeutig | 42 | 84% |
 | Zur_pruefung | 6 | 12% |
 | Aussortiert | 13 | 26% |
 | Erneut_crawlen | 2 | 4% |
 
 ### Batch 3 (2,513 customers - production)
-| Category | Customers | % |
-|----------|-----------|-----|
-| Eindeutig | ~2,100 | ~84% |
-| Zur_pruefung | ~250 | ~10% |
-| Aussortiert | ~200 | ~8% |
-| Erneut_crawlen | ~20 | ~1% |
 
-**Key Finding:** Consistent ~84% auto-accept rate across all batch sizes
+| Category | Rows | Unique Customers | % |
+| ---------- | ----- | ---------------- | ----- |
+| Eindeutig | 1,776 | 1,776 | 70.7% |
+| Zur_pruefung | 2,307 | — | — |
+| Aussortiert | 3,639 | — | — |
+| Erneut_crawlen | 165 | 165 | 6.6% |
+
+### Batch 4 (2,513 customers - production)
+
+| Category | Rows | Unique Customers | % |
+| ---------- | ----- | ---------------- | ----- |
+| Eindeutig | 1,646 | 1,646 | 65.5% |
+| Zur_pruefung | 2,837 | — | — |
+| Aussortiert | 4,343 | — | — |
+| Erneut_crawlen | 171 | 171 | 6.8% |
+
+### Consolidated Batches 1-4
+
+| Category | Rows | Unique Customers |
+| ---------- | ----- | ---------------- |
+| Eindeutig | 3,470 | 3,423 |
+| Zur_pruefung | 5,188 | 1,269 |
+
+**zur_pruefung breakdown (batches 1-4):**
+
+| Reason | Rows |
+| ------ | ---- |
+| Keine Strassentreffer (street not matched) | 4,288 |
+| Kein klarer Treffer (no clear score winner) | 752 |
+| Mehrere hohe Treffer (multiple ≥80 scores) | 148 |
+
+**Note on acceptance rate:** Real production rate is ~68% (not the ~84% from early small-batch tests).
+The gap is mainly driven by street-matching failures (4,288 rows) where no Google result
+matched the expected street → conservative fallback to manual review.
 
 ---
 
 ## Critical Rules & Decisions
 
 ### 1. **Exact Matches Only (NO Fuzzy Approximations)**
+
 - House number 23 searching ≠ House number 18 found
 - Result: → Manual review or retry (not auto-accept)
 - Reason: Data integrity (accuracy > volume)
 
 ### 2. **Conservative Scoring**
+
 - High confidence threshold (≥80 score for auto-accept)
 - When ambiguous → manual review (not guessing)
 - Result: Low false positives (high precision)
 
 ### 3. **Separate SearchString + postalCode**
+
 - Both sent to Apify (not combined into new search)
 - Purpose: Apify uses both for better filtering
 
 ### 4. **6 Parallel Workers (Tested Stable)**
+
 - Speeds up enrichment ~6x (vs sequential)
 - No Apify rate limit issues observed
 - Safe for 2,513+ customers per batch
 
 ### 5. **Benefit of Doubt for Missing Data**
+
 - Missing PLZ? → Pass through (don't reject)
 - Missing street? → Use title scoring only
 - Reason: Better to ask than to lose data
 
 ### 6. **Generic vs Brand Name Scoring**
+
 - "Restaurant Jura" → Different weights than "Coop"
 - Automatic detection via word list
 - Ensures fair scoring across business types
+
+### 7. **Stage 3 (Single Result) — No Title Floor, Intentional**
+
+- If only 1 result survives the PLZ filter, it is auto-accepted without title scoring
+- Decision: Do NOT add a minimum title score here
+- Reason: Rebranding (e.g. Volg → Spar at the same address) would score near 0 on title
+  but is still the correct match. A title floor would silently reject valid rebrands.
+- Accepted trade-off: A wrong business in the right PLZ with no competitors gets accepted.
+  Mitigation: keep score column in eindeutig output (Priority 3) for auditing.
+
+### 8. **token_set_ratio — Kept Broadly, Intentional**
+
+- `fuzz.token_set_ratio` is used for the full-title comparison in scoring
+- Decision: Do NOT replace with `token_sort_ratio` or stricter methods globally
+- Reason: Swiss businesses often have different names for the same place
+  (e.g. "Restaurant Bären" and "Hotel Bären" are the same building).
+  token_set_ratio correctly scores these high regardless of word order or extra tokens.
+- Known edge case: Short acronyms (bp, LS, DLZ ≤3 chars) cause over-matching because
+  the short token is a perfect subset. Fix planned as Priority 2 improvement (targeted,
+  not a global change).
 
 ---
 
 ## How to Run
 
 ### Prerequisites
+
 1. Python 3.10+ with venv activated
 2. `.env` file with `APIFY_API_TOKEN` and `ACTOR_ID`
 3. Input CSV in `Daten/V2/Prod/` folder
 
-### Full Workflow (Single Customer)
+### Full Workflow
 
 ```bash
 # Step 0: Preprocess
@@ -317,8 +398,29 @@ python main.py
 # Step 2: Clean (via GUI)
 # Click "2. Bereinigen" button
 # Select _optimierte_daten.csv
-# Wait for 4 output files
+# Wait for 4 output files (_eindeutig, _zur_pruefung, _aussortiert, _erneut_crawlen)
+
+# Step 3: Consolidate (via GUI) — run ONCE after all batches are done
+# Click "3. Zusammenführen" button (orange)
+# Select the Prod/ folder (containing batch_1/, batch_2/, ... subfolders)
+# Auto-detects which batches have output files (skips empty ones like batch_5 before it runs)
+# Output: consolidated_batch_X_Y/ folder with merged eindeutig + zur_pruefung files
 ```
+
+### allcolumns Files (Full Google Maps Data)
+
+Each batch directory can contain an `allcolumns/` subfolder with the full raw output
+from Apify (90+ columns vs the 19 in the optimised files). These are created manually
+by running Step 2 against the `_angereicherte_daten.csv` (raw file) instead of the
+`_optimierte_daten.csv`.
+
+- `batch_N/allcolumns/*_eindeutig.csv` — accepted records with ALL Google Maps columns
+- Useful for DB import when you need extra fields (reviews, categories, images, etc.)
+
+**Note:** batch_4 folder is named `allcolumn` (no `s`) — naming inconsistency, leave as-is.
+
+**Consolidated allcolumns (batches 1-4):**
+`consolidated_batch_1_4/eindeutig_allcolumns_batch_1_4.csv` — 3,668 rows, ~90 columns
 
 ### Batch Processing (Current Approach)
 
@@ -340,7 +442,7 @@ Daten/V2/Prod/batch_5/InputData_cleaned_vollstaendig.csv (rows 5027-7539)
 ## Batch Processing Status
 
 | Batch | Size | Step 0 | Step 1 | Step 2 | Status |
-|-------|------|--------|--------|--------|--------|
+| ------- | ------ | -------- | -------- | -------- | -------- |
 | 1 | 10 | ✅ | ✅ | ✅ | Complete (test) |
 | 2 | 50 | ✅ | ✅ | ✅ | Complete (test) |
 | 3 | 2,513 | ✅ | ✅ | ✅ | **Complete** 🎉 |
@@ -354,25 +456,30 @@ Daten/V2/Prod/batch_5/InputData_cleaned_vollstaendig.csv (rows 5027-7539)
 ## Known Issues & Edge Cases
 
 ### 1. **Input Data Quality**
+
 - Generic names ("Lebensmittelgeschäft" = grocery store) → Hard to disambiguate
 - Solution: Better input validation or manual specification
 
 ### 2. **Street Address Mismatches**
+
 - Searched Wohlerstrasse 23 → Found Wohlerstrasse 18, 55 (nearby)
 - Algorithm: Correctly rejects (no exact match)
 - Solution: Manual review or re-crawl with adjusted search
 
 ### 3. **Timeout Hangs (Rare)**
+
 - Some Apify runs take 3+ minutes without returning
 - Current: No timeout parameter implemented (apify-client limitation)
 - Workaround: Increase `timeoutSecs` on Apify actor settings (currently 300s)
 
 ### 4. **Empty Results (~1%)**
+
 - Apify returns no data for some searches
 - Reason: Business not in Google Maps or search too generic
 - Solution: → `_erneut_crawlen.csv` for manual adjustment
 
 ### 5. **Duplicate Matches in Same Category**
+
 - One customer can have multiple "eindeutig" results (rare)
 - Reason: Multiple Google profiles for same business
 - Solution: Manual review in post-processing
@@ -381,39 +488,103 @@ Daten/V2/Prod/batch_5/InputData_cleaned_vollstaendig.csv (rows 5027-7539)
 
 ## Next Steps
 
-### Immediate (Next Agent's Task)
-1. ✅ Run **batch_5** (last 2,513 customers)
-2. Analyze results & compare with batch_3 & 4
-3. If consistent ~84% acceptance → proceed to DB import
+### Immediate (NextTask)
+
+1. ✅ Run **batch_5** + consolidated erneut_crawlen from batches 1-4 (night run)
+2. After night run: run Step 2 (Bereinigen) on batch_5 results
+3. Run Step 3 (Zusammenführen) via GUI to produce consolidated_batch_1_5
 
 ### Post-Batch Processing
-1. Consolidate all 4 eindeutig files into one master export
-2. Process `_zur_pruefung.csv` files for manual review (expected ~10-12%)
-3. Retry `_erneut_crawlen.csv` files (expected ~1%)
 
-### Long-Term Improvements (No rush)
-1. Input validation: Reject too-generic SearchStrings
-2. Timeout handling: Implement proper Apify timeout parameter
-3. Scoring refinement: A/B test confidence thresholds (80 vs 75)
-4. Address parsing: Use full address field as fallback
+1. ✅ Consolidate batches 1-4 → `consolidated_batch_1_4/` (done, Step 3 GUI button added)
+2. Process `zur_pruefung_batch_1_4.csv` for manual review (1,269 unique customers)
+3. After batch_5 night run: consolidate all 5 batches → `consolidated_batch_1_5/`
+
+### Improvements (Next Steps — Prioritised)
+
+#### Priority 1 — Timeout per API call (no retry, no extra cost)
+
+**What:** Add a per-call timeout (~90s) in `apify_wrapper.py` so a hanging request
+doesn't block a worker for 10+ minutes. Timed-out customer → `erneut_crawlen` (same
+as empty result). Zero additional Apify cost.  
+**Why not done yet:** Minor effort, low urgency while batches are running.  
+**File:** `apify_wrapper.py:run_scraper_and_get_results()`
+
+#### Priority 2 — Fix short-token over-matching in scoring
+
+**What:** `token_set_ratio` inflates scores for short acronyms (bp, LS, DLZ ≤3 chars).
+`token_set_ratio("bp service buelach", "bp")` = 100 because `bp` is a perfect subset.
+This traps ~25 customers in `zur_pruefung` unnecessarily.  
+**Fix approach:** Add a coverage penalty when the Google title is a strict short subset
+of the search name (e.g. title tokens ≤ 50% of search tokens → reduce full_score).  
+**Risk:** Low — only affects short-acronym cases, does not touch the general scoring.  
+**File:** `data_cleaner.py:_calculate_scores()`
+
+#### Priority 3 — Keep score column in eindeutig output
+
+**What:** Currently the `score` column is dropped before writing `_eindeutig.csv`.
+Keeping it allows auditing why a record was accepted and helps tune thresholds later.  
+**Risk:** Zero — pure addition, no logic change.  
+**File:** `data_cleaner.py:clean_data()` — remove `drop(columns=['score'])`
+
+#### Priority 4 — Input validation for too-generic SearchStrings
+
+**What:** SearchStrings like "Boucherie, Rue des Tilleuls 5, 1800 Vevey" have only
+a category name as title. Impossible to disambiguate. Flag these in Step 0.  
+**File:** `data_preprocessor.py`
+
+#### ~~Priority 5 — Retry logic~~ ❌ Rejected
+Retry on failed API calls would multiply run time (2,500 customers × 2-3 min = 8h baseline).
+Each retry adds time and Apify cost. Not worth it.
+Use `erneut_crawlen` batch for manual retry instead.
+
+---
+
+### ERP/CRM Empfehlungen (für DB-Verantwortlichen)
+
+Folgende Felder sollen im ERP pro Kunde gespeichert werden, damit zukünftige
+Anreicherungsläufe schneller und genauer sind:
+
+| Feld | Quelle | Zweck |
+|------|--------|-------|
+| `placeId` | Google Maps | **Wichtigste Empfehlung.** Beim nächsten Run direkt per Place ID suchen → kein Scoring nötig. Bereits gematchte Kunden sofort fertig. |
+| `title` (Google Business Name) | Google Maps | Exakter Google-Name → besserer Suchbegriff beim nächsten Run. Erkennt Rebranding automatisch. |
+| `location` (Lat/Long) | Google Maps | Validierung: Ist neuer Treffer am gleichen Standort? Erkennt Umzüge. |
+| `cid` | Google Maps | Google-interne Business-ID — zusammen mit Place ID eindeutige Identifikation. |
+| `permanentlyClosed` | Google Maps | ERP kann Kunden automatisch als inaktiv markieren ohne neuen Run. |
+
+**Game-Changer Place ID:** Sobald Place ID gespeichert ist, können beim nächsten Run
+~3.423 bereits gematchte Kunden direkt per ID abgerufen werden — der volle Workflow
+(Scoring, Cleaning) wird nur noch für neue oder nie gematchte Kunden benötigt.
+
+#### Pending / Future (zurückgestellt)
+
+- **Match-Qualität speichern** (`qualitaet`-Feld: OK / OK Score / OK Dynamisch) —
+  sinnvoll sobald Place ID gut befüllt ist, um schwache Matches beim nächsten Lauf
+  zu priorisieren.
+- **Datum der letzten Anreicherung** — Timestamp wann Daten zuletzt aktualisiert wurden,
+  um Kunden nach Aktualität zu priorisieren. Wird redundant wenn Place ID-Abdeckung hoch.
 
 ---
 
 ## Configuration Files
 
 ### .env (Credentials - DO NOT COMMIT)
-```
+
+```env
 APIFY_API_TOKEN=<your-token>
 ACTOR_ID=<your-actor-id>
 ```
 
 ### config.py (Tunable Parameters)
+
 ```python
 DYNAMIC_THRESHOLD_GAP = 30  # Score gap for dynamic threshold
 ACTOR_TIMEOUT_MS = 120000   # Currently unused (TODO)
 ```
 
 ### main.py (Threading)
+
 ```python
 ThreadPoolExecutor(max_workers=6)  # Parallel workers
 ```
@@ -423,12 +594,14 @@ ThreadPoolExecutor(max_workers=6)  # Parallel workers
 ## Contact & Questions
 
 **For next agent:**
+
 - Check `ALGORITHM_EXPLAINED.md` for detailed scoring logic
 - Check `test_data_cleaner.py` for unit tests
 - Check recent commit messages for recent changes
 - Ask questions if algorithm behavior seems wrong
 
 **Key Contacts in Code:**
+
 - `data_cleaner.py:_calculate_scores()` - Title scoring logic
 - `data_cleaner.py:_street_matches()` - Street matching logic
 - `apify_wrapper.py:run_scraper_and_get_results()` - API calls
@@ -436,5 +609,5 @@ ThreadPoolExecutor(max_workers=6)  # Parallel workers
 
 ---
 
-**Last Updated:** 2026-04-14  
-**Status:** Batches 3 & 4 complete, Batch 5 ready ✅
+**Last Updated:** 2026-04-14
+**Status:** Batches 1-4 complete & consolidated, Batch 5 pending (night run) ✅

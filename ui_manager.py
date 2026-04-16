@@ -45,6 +45,16 @@ class AppUI:
         )
         self.clean_button.pack(side=tk.LEFT, padx=5)
 
+        # Schritt 3: Zusammenführen — konsolidiert alle batch_*-Ordner in Masterexporte
+        self.consolidate_button = tk.Button(
+            button_frame,
+            text="3. Zusammenführen",
+            width=20,
+            bg="#FF9800",    # Orange — Post-Processing Schritt
+            fg="white"
+        )
+        self.consolidate_button.pack(side=tk.LEFT, padx=5)
+
         # --- Mittlerer Bereich: Log-Ausgabe ---
         self.log_display = scrolledtext.ScrolledText(
             root,

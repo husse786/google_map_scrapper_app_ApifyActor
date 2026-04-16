@@ -20,6 +20,7 @@ from apify_wrapper import ApifyClientWrapper
 from csv_postprocessor import CSVPostProcessor
 from data_cleaner import DataCleaner
 from data_preprocessor import DataPreprocessor
+from data_consolidator import DataConsolidator
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +69,13 @@ class GoogleMapsScraper:
         self.post_processor = CSVPostProcessor()
         self.cleaner = DataCleaner()
         self.preprocessor = DataPreprocessor()
+        self.consolidator = DataConsolidator()
 
         # Buttons mit Funktionen verknüpfen
         self.ui.preprocess_button.config(command=self.start_preprocessing)
         self.ui.upload_button.config(command=self.start_enrichment)
         self.ui.clean_button.config(command=self.start_cleaning)
+        self.ui.consolidate_button.config(command=self.start_consolidation)
 
     # ==========================================================================
     # Buttons deaktivieren/aktivieren
@@ -82,11 +85,13 @@ class GoogleMapsScraper:
         self.ui.preprocess_button.config(state=tk.DISABLED)
         self.ui.upload_button.config(state=tk.DISABLED)
         self.ui.clean_button.config(state=tk.DISABLED)
+        self.ui.consolidate_button.config(state=tk.DISABLED)
 
     def _enable_all_buttons(self):
         self.ui.preprocess_button.config(state=tk.NORMAL)
         self.ui.upload_button.config(state=tk.NORMAL)
         self.ui.clean_button.config(state=tk.NORMAL)
+        self.ui.consolidate_button.config(state=tk.NORMAL)
 
     # ==========================================================================
     # SCHRITT 0: Vorverarbeitung
@@ -304,6 +309,48 @@ class GoogleMapsScraper:
 
         except Exception as e:
             logger.critical(f"Fehler bei der Bereinigung: {e}")
+        finally:
+            self.ui.set_status("Bereit.")
+            self._enable_all_buttons()
+
+
+    # ==========================================================================
+    # SCHRITT 3: Zusammenführen (Konsolidierung aller Batches)
+    # ==========================================================================
+
+    def start_consolidation(self):
+        dirpath = filedialog.askdirectory(
+            title="Prod-Ordner mit batch_*-Unterordnern auswählen",
+            initialdir="./Daten"
+        )
+        if dirpath:
+            thread = threading.Thread(target=self.process_consolidation, args=(dirpath,))
+            thread.daemon = True
+            thread.start()
+
+    def process_consolidation(self, dirpath: str):
+        try:
+            self._disable_all_buttons()
+            self.ui.set_status("Zusammenführen läuft...")
+
+            logger.info("================================")
+            logger.info(f"Starte Zusammenführung in: {Path(dirpath).name}")
+
+            results = self.consolidator.consolidate(dirpath)
+
+            stats = results['stats']
+            logger.info("================================")
+            logger.info("Zusammenführung abgeschlossen!")
+            logger.info(f"  Batches:              {results['batches_found']}")
+            logger.info(f"  Ausgabeordner:        {Path(results['output_dir']).name}")
+            logger.info(f"  Eindeutig:            {stats['eindeutig_rows']} Zeilen "
+                        f"({stats['eindeutig_unique_customers']} Kunden) → {Path(results['eindeutig']).name}")
+            logger.info(f"  Zur Prüfung:          {stats['zur_pruefung_rows']} Zeilen "
+                        f"({stats['zur_pruefung_unique_customers']} Kunden) → {Path(results['zur_pruefung']).name}")
+            logger.info("================================")
+
+        except Exception as e:
+            logger.critical(f"Fehler bei der Zusammenführung: {e}")
         finally:
             self.ui.set_status("Bereit.")
             self._enable_all_buttons()
