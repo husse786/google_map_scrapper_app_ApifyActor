@@ -4,18 +4,41 @@
 # Zweck: Nimmt die angereicherten Daten (1 Kunde → mehrere Google-Ergebnisse)
 #         und entscheidet automatisch, welches Ergebnis das richtige ist.
 #
-# Ausgabe: 4 Dateien
-#   - _eindeutig.csv       → automatisch zugeordnete, korrekte Treffer
-#   - _zur_pruefung.csv    → mehrdeutige Fälle für manuelle Prüfung
-#   - _aussortiert.csv     → klar falsche Ergebnisse
-#   - _erneut_crawlen.csv  → leere API-Ergebnisse, die nochmals abgefragt werden sollen
+# Ausgabe (02_DATENVERTRAG.md §2): drei Hauptdateien plus eine Diagnosedatei
+#   - fertig_fuer_erp.csv  ①  automatisch akzeptiert, direkt importierbar
+#   - zur_pruefung.csv     ②  unklar, ein Mensch entscheidet
+#   - nicht_moeglich.csv   ③  kein verwertbares Ergebnis
+#   - aussortiert.csv         Diagnose: verworfene Kandidaten, keine der drei
+#
+# Invariante: Jede KundenNr aus der Eingabe steht in genau einer der drei
+# Hauptdateien — nie in zweien, nie in keiner. Die Diagnosedatei zaehlt nicht mit.
+
+import logging
+import re
+from pathlib import Path
 
 import pandas as pd
 from thefuzz import fuzz
-import logging
-import re
 
 logger = logging.getLogger(__name__)
+
+# Spalten der drei Ausgabedateien, in dieser Reihenfolge (02_DATENVERTRAG.md §2).
+# qualitaet, score und grund sind Pflicht und werden nie verworfen.
+OUTPUT_COLUMNS = [
+    'KundenNr', 'SearchString', 'PLZ', 'Stadt',
+    'title', 'address', 'street', 'postalCode', 'city',
+    'openingHours', 'phone', 'phoneUnformatted', 'website',
+    'permanentlyClosed', 'temporarilyClosed', 'cid', 'placeId', 'location',
+    'qualitaet', 'score', 'grund',
+]
+
+# Dateinamen der Ausgabe. Identisch in beiden Modi (02_DATENVERTRAG.md §2).
+OUTPUT_FILES = {
+    'fertig_fuer_erp': 'fertig_fuer_erp.csv',
+    'zur_pruefung': 'zur_pruefung.csv',
+    'nicht_moeglich': 'nicht_moeglich.csv',
+    'aussortiert': 'aussortiert.csv',
+}
 
 
 class DataCleaner:
@@ -40,10 +63,15 @@ class DataCleaner:
     # mit dem Google-Titel "Volg" verglichen werden.
     LEGAL_SUFFIXES = r'\b(ag|gmbh|kg|sa|sarl|sàrl|inc|ltd|co|ohg|eg|se|mbh|lkg|detailhandels)\b'
 
+    # Feste Schwellenwerte aus 03_ENTSCHEIDUNGEN.md B1/B2/B3.
+    HIGH_SCORE_THRESHOLD = 80       # B3: Score, ab dem ein Treffer als "hoch" gilt
+    STREET_NAME_THRESHOLD = 90      # B1: fuzz.ratio-Schwelle fuer den Strassennamen
+    SINGLE_HIT_NAME_THRESHOLD = 60  # B2: Namensscore, ab dem ein Einzeltreffer reicht
+
     def __init__(self, dynamic_gap_threshold=30):
         """
         Initialisiert den DataCleaner.
-        
+
         Args:
             dynamic_gap_threshold: Mindestabstand zwischen dem besten und zweitbesten Score,
                                    damit der beste Treffer als "dynamisch eindeutig" gilt.
@@ -59,7 +87,7 @@ class DataCleaner:
         """
         Normalisiert einen Text für den Vergleich.
         Ändert NICHT die Originaldaten — nur die interne Vergleichskopie.
-        
+
         Schritte:
         1. Kleinbuchstaben
         2. Umlaute auflösen (ä→ae, ö→oe, ü→ue)
@@ -113,7 +141,7 @@ class DataCleaner:
         """
         Extrahiert die Hausnummer aus einem normalisierten Strassentext.
         Sucht nach der letzten Zahl (ggf. mit Buchstabe, z.B. "12a").
-        
+
         Beispiele:
             "seetalstrasse 60"  → "60"
             "bahnhofstrasse 12a" → "12a"
@@ -125,7 +153,7 @@ class DataCleaner:
     def _extract_street_name(self, street_text: str) -> str:
         """
         Extrahiert den reinen Strassennamen ohne Hausnummer.
-        
+
         Beispiele:
             "seetalstrasse 60"  → "seetalstrasse"
             "dorfstrasse 19"    → "dorfstrasse"
@@ -138,7 +166,7 @@ class DataCleaner:
         """
         Vergleicht eine Input-Strasse mit einer Google-Strasse.
         Berücksichtigt Hausnummern intelligent:
-        
+
         Regeln:
         ┌─────────────────────────┬──────────────────────┬──────────────────────────────┐
         │ Input                   │ Google               │ Ergebnis                     │
@@ -150,8 +178,10 @@ class DataCleaner:
         │ Seetalstrasse           │ Hauptstrasse 60      │ ❌ Reject (Name unterschiedlich)│
         │ Seetalstrasse           │ Seetalstrasse        │ ✅ Match                       │
         └─────────────────────────┴──────────────────────┴──────────────────────────────┘
-        
-        Prinzip: Nur ablehnen wenn sicher falsch. Im Zweifel durchlassen → Title Scoring entscheidet.
+
+        Der Strassenname wird mit fuzz.ratio >= 90 verglichen (03_ENTSCHEIDUNGEN.md B1).
+        Das frühere fuzz.partial_ratio hat Teilstrings akzeptiert und damit falsche
+        Strassen durchgelassen ("Dorfstrasse" = "Oberdorfstrasse").
         """
         norm_input = self._normalize_text(input_street)
         norm_google = self._normalize_text(google_street)
@@ -166,8 +196,8 @@ class DataCleaner:
         input_name = self._extract_street_name(norm_input)
         google_name = self._extract_street_name(norm_google)
 
-        # Schritt 1: Strassenname muss immer ungefähr übereinstimmen (>90% Ähnlichkeit)
-        name_match = fuzz.partial_ratio(input_name, google_name) > 90
+        # Schritt 1: Strassenname muss immer ungefähr übereinstimmen (fuzz.ratio >= 90)
+        name_match = fuzz.ratio(input_name, google_name) >= self.STREET_NAME_THRESHOLD
 
         # Strassenname stimmt nicht → sofort ablehnen
         if not name_match:
@@ -182,6 +212,31 @@ class DataCleaner:
         # reicht der Strassenname-Match aus
         return True
 
+    def _street_and_number_exact(self, input_street: str, google_street: str) -> bool:
+        """
+        Prüft, ob Strassenname UND Hausnummer exakt übereinstimmen.
+
+        Zweite Bedingung der Einzeltreffer-Regel (03_ENTSCHEIDUNGEN.md B2). Sie
+        fängt Rebranding ab: gleiche Adresse, neuer Name (Volg → Spar) bleibt in ①.
+
+        Strenger als _street_matches: der Name muss nach der Normalisierung
+        zeichengleich sein, und beide Seiten müssen eine Hausnummer tragen.
+        """
+        norm_input = self._normalize_text(input_street)
+        norm_google = self._normalize_text(google_street)
+        if not norm_input or not norm_google:
+            return False
+
+        input_number = self._extract_house_number(norm_input)
+        google_number = self._extract_house_number(norm_google)
+        if not input_number or not google_number:
+            return False
+
+        if input_number != google_number:
+            return False
+
+        return self._extract_street_name(norm_input) == self._extract_street_name(norm_google)
+
     # ==========================================================================
     # HILFSMETHODEN: Scoring
     # ==========================================================================
@@ -189,11 +244,11 @@ class DataCleaner:
     def _get_scoring_weights(self, first_word: str) -> tuple:
         """
         Bestimmt die Gewichtung für das Title-Scoring basierend auf dem ersten Wort.
-        
+
         Markenname (z.B. "Denner", "Coop", "Migros"):
             → 70% Erst-Wort-Vergleich, 30% Gesamtvergleich
             → Das erste Wort ist der stärkste Indikator
-            
+
         Generisches Wort (z.B. "Restaurant", "Metzgerei", "Kiosk"):
             → 30% Erst-Wort-Vergleich, 70% Gesamtvergleich
             → Das erste Wort sagt wenig aus, der Gesamtname ist wichtiger
@@ -206,17 +261,22 @@ class DataCleaner:
     def _calculate_scores(self, group: pd.DataFrame) -> pd.DataFrame:
         """
         Berechnet den gewichteten Ähnlichkeitsscore für jede Zeile in einer Kundengruppe.
-        
+
         Vergleicht den Suchbegriff (SearchString) mit jedem Google-Titel.
-        
+
         Score-Berechnung:
-            1. Erst-Wort-Score: Wie ähnlich ist das erste Wort des Suchbegriffs 
+            1. Erst-Wort-Score: Wie ähnlich ist das erste Wort des Suchbegriffs
                zum ersten Wort des Google-Titels? (fuzz.ratio)
-            2. Gesamt-Score: Wie ähnlich ist der gesamte Suchbegriff zum gesamten 
+            2. Gesamt-Score: Wie ähnlich ist der gesamte Suchbegriff zum gesamten
                Google-Titel? (fuzz.token_set_ratio — reihenfolge-unabhängig)
             3. Gewichteter Score = (Gewicht₁ × Erst-Wort) + (Gewicht₂ × Gesamt)
-        
+
         Gibt die Gruppe mit einer neuen 'score' Spalte zurück.
+
+        Der Score haengt nur vom Suchbegriff des Kunden und vom jeweiligen Titel ab,
+        nicht von den uebrigen Zeilen der Gruppe. Er wird deshalb einmal fuer alle
+        Kandidaten berechnet und danach nur noch gelesen — jede Ausgabezeile traegt
+        ihn (02_DATENVERTRAG.md §2).
         """
         if group.empty:
             return group
@@ -281,15 +341,15 @@ class DataCleaner:
     def _has_street_in_searchstring(self, search_string: str) -> str:
         """
         Prüft, ob der SearchString eine Strasse enthält (2. Komma-separierter Teil).
-        
+
         Beispiele:
             "Denner, Hauptstrasse 5, 5620" → "Hauptstrasse 5" (Strasse vorhanden)
             "Denner,  , 5620"              → "" (keine Strasse)
             "Denner, 5620"                 → "" (nur Zahl, keine Strasse)
-        
+
         Returns: Den Strassenteil als String, oder '' wenn keine Strasse vorhanden.
         """
-        parts = search_string.split(',')
+        parts = str(search_string).split(',')
         if len(parts) >= 2:
             street_part = parts[1].strip()
             # Sicherstellen, dass es nicht nur eine Zahl ist (z.B. PLZ-Fragment)
@@ -300,7 +360,7 @@ class DataCleaner:
     def _plz_matches(self, row: pd.Series, input_plz: str) -> bool:
         """
         Prüft ob die Postleitzahl des Google-Ergebnisses mit der erwarteten PLZ übereinstimmt.
-        
+
         Wenn eine der beiden PLZ fehlt, wird nicht gefiltert (Benefit of Doubt).
         So gehen keine Ergebnisse verloren, nur weil Google keine PLZ zurückgegeben hat.
         """
@@ -314,12 +374,9 @@ class DataCleaner:
     def _is_empty_result(self, row: pd.Series) -> bool:
         """
         Prüft ob ein API-Ergebnis leer ist (die Google Maps API hat nichts gefunden).
-        
+
         Ein Ergebnis gilt als leer wenn ALLE dieser Felder leer sind:
         title, address, street, placeId
-        
-        Leere Ergebnisse werden separat gespeichert, damit sie nochmals
-        über Flow 1 (Anreicherung) abgefragt werden können.
         """
         key_fields = ['title', 'address', 'street', 'placeId']
         for field in key_fields:
@@ -328,29 +385,80 @@ class DataCleaner:
         return True
 
     # ==========================================================================
+    # HILFSMETHODEN: Klartextgründe (02_DATENVERTRAG.md §4)
+    # ==========================================================================
+
+    @staticmethod
+    def _fmt_score(score) -> str:
+        """Formatiert einen Score für den Klartextgrund: 93.75 → '94'."""
+        try:
+            return f"{float(score):.0f}"
+        except (TypeError, ValueError):
+            return '0'
+
+    @staticmethod
+    def _aufzaehlung(werte, max_anzahl: int = 4) -> str:
+        """
+        Baut eine deutsche Aufzählung aus einer Werteliste, ohne Wiederholungen.
+
+        ['Wohlerstrasse 18', 'Wohlerstrasse 55'] → 'Wohlerstrasse 18 und Wohlerstrasse 55'
+        Mehr als max_anzahl Werte werden gekürzt: '..., A, B und 3 weitere'
+        """
+        eindeutig = [w for w in dict.fromkeys(str(w).strip() for w in werte) if w]
+        if not eindeutig:
+            return ''
+        if len(eindeutig) > max_anzahl:
+            rest = len(eindeutig) - max_anzahl
+            return ', '.join(eindeutig[:max_anzahl]) + f' und {rest} weitere'
+        if len(eindeutig) == 1:
+            return eindeutig[0]
+        return ', '.join(eindeutig[:-1]) + ' und ' + eindeutig[-1]
+
+    # ==========================================================================
+    # HILFSMETHODEN: Ausgabezeilen
+    # ==========================================================================
+
+    @staticmethod
+    def _make_row(source, qualitaet: str, score, grund: str) -> dict:
+        """Baut eine Ausgabezeile aus einer Kandidatenzeile plus Entscheid."""
+        row = dict(source)
+        row['qualitaet'] = qualitaet
+        row['score'] = round(float(score), 2)
+        row['grund'] = grund
+        return row
+
+    # ==========================================================================
     # HAUPTMETHODE: Bereinigung
     # ==========================================================================
 
-    def clean_data(self, input_filepath: str) -> dict:
+    def clean_data(self, input_filepath: str, output_dir: str = None) -> dict:
         """
         Hauptmethode zur Bereinigung der angereicherten Daten.
-        
+
         Ablauf für jeden Kunden (KundenNr-Gruppe):
-        
-        1. Leere Ergebnisse erkennen     → _erneut_crawlen.csv
-        2. PLZ-Filter                     → falsche PLZ aussortieren
-        3. Einzelergebnis-Check           → direkt eindeutig wenn nur 1 Treffer
-        4. Weiche: Strasse vorhanden?
+
+        0. Suchbegriff vorhanden?          → sonst ③ (Eingabe unbrauchbar)
+        1. Leere Ergebnisse erkennen       → alle leer: ③ (kein Ergebnis)
+        2. Score für jeden Kandidaten berechnen
+        3. PLZ-Filter                      → kein Treffer: ② (keine PLZ-Treffer)
+        4. Einzeltreffer prüfen            → Regel B2 entscheidet ① oder ②
+        5. Weiche: Strasse vorhanden?
            JA  → Szenario B: Strassenabgleich, dann Title-Scoring
            NEIN → Szenario A: Nur Title-Scoring
-        5. Title-Scoring mit Schwellenwerten:
-           Score ≥ 80         → eindeutig (fester Schwellenwert)
-           Abstand ≥ 30       → eindeutig (dynamischer Schwellenwert)
-           Sonst              → zur manuellen Prüfung
-        
+        6. Title-Scoring mit Schwellenwerten:
+           genau 1 Score ≥ 80  → ① OK (Score)
+           mehrere ≥ 80        → ② mehrere hohe Treffer
+           Abstand ≥ 30        → ① OK (Dynamisch)
+           sonst               → ② kein klarer Treffer
+
+        Args:
+            input_filepath: angereicherte CSV (Semikolon, utf-8-sig)
+            output_dir:     Zielordner. Fehlt er, wird neben der Eingabedatei
+                            ein Ordner "<dateiname>_ergebnis" angelegt.
+
         Returns:
-            Dict mit Dateipfaden: {'eindeutig': '...', 'zur_pruefung': '...',
-                                   'aussortiert': '...', 'erneut_crawlen': '...'}
+            Dict mit Dateipfaden: {'fertig_fuer_erp': '...', 'zur_pruefung': '...',
+                                   'nicht_moeglich': '...', 'aussortiert': '...'}
         """
         logger.info(f"Starte Bereinigung der Datei: {input_filepath}")
 
@@ -360,235 +468,331 @@ class DataCleaner:
         if 'KundenNr' not in df.columns:
             raise ValueError("Die Spalte 'KundenNr' wurde nicht gefunden.")
 
-        # Ergebnis-Listen für die 4 Ausgabedateien
-        unique_results = []     # Automatisch zugeordnete korrekte Treffer
-        review_results = []     # Mehrdeutige Fälle für manuelle Prüfung
-        rejected_results = []   # Klar falsche Ergebnisse
-        recrawl_results = []    # Leere Ergebnisse zum nochmaligen Abfragen
+        # Ergebnis-Listen für die drei Ausgabedateien plus Diagnose
+        fertig = []          # ① automatisch akzeptiert
+        pruefung = []        # ② Mensch entscheidet
+        nicht_moeglich = []  # ③ kein verwertbares Ergebnis
+        aussortiert = []     # Diagnose: verworfene Kandidaten
 
         # Daten nach KundenNr gruppieren — jede Gruppe = 1 Kunde mit N Google-Ergebnissen
-        grouped = df.groupby('KundenNr')
-        total_groups = len(grouped)
-        logger.info(f"Verarbeite {total_groups} Kundengruppen...")
+        grouped = df.groupby('KundenNr', sort=False)
+        logger.info(f"Verarbeite {len(grouped)} Kundengruppen...")
 
         for kunden_nr, group in grouped:
-            # Stammdaten des Kunden aus der ersten Zeile der Gruppe lesen
-            search_string = group.iloc[0].get('SearchString', '')
-            input_plz = str(group.iloc[0].get('PLZ', '')).strip()
-            input_stadt = str(group.iloc[0].get('Stadt', '')).strip()
-
-            # ==================================================================
-            # SCHRITT 1: Leere Ergebnisse erkennen und für Re-Crawl separieren
-            # ==================================================================
-            empty_mask = group.apply(lambda row: self._is_empty_result(row), axis=1)
-            empty_rows = group[empty_mask]
-            filled_rows = group[~empty_mask]
-
-            # Leere Ergebnisse → Re-Crawl-Datei (im Input-Format für Flow 1)
-            if not empty_rows.empty:
-                logger.info(f"KundenNr {kunden_nr}: {len(empty_rows)} leere Ergebnisse → erneut crawlen")
-                for _, row in empty_rows.iterrows():
-                    recrawl_results.append({
-                        'SearchString': search_string,
-                        'PLZ': input_plz,
-                        'Stadt': input_stadt,
-                        'KundenNr': kunden_nr
-                    })
-
-            # Wenn ALLE Ergebnisse leer sind → Kunde ist fertig (kommt in Re-Crawl)
-            if filled_rows.empty:
-                continue
-
-            # Ab hier nur noch mit gefüllten Ergebnissen weiterarbeiten
-            group = filled_rows
-
-            # ==================================================================
-            # SCHRITT 2: PLZ-Filter — Ergebnisse aus falscher Postleitzahl entfernen
-            # ==================================================================
-            plz_mask = group.apply(lambda row: self._plz_matches(row, input_plz), axis=1)
-            plz_matches = group[plz_mask]
-            plz_mismatches = group[~plz_mask]
-
-            # Falsche PLZ → aussortieren
-            if not plz_mismatches.empty:
-                logger.debug(f"KundenNr {kunden_nr}: {len(plz_mismatches)} Ergebnisse "
-                             f"mit falscher PLZ aussortiert")
-                for _, row in plz_mismatches.iterrows():
-                    row_dict = row.to_dict()
-                    row_dict['qualitaet'] = 'AUSSORTIERT (PLZ)'
-                    rejected_results.append(row_dict)
-
-            # Wenn nach PLZ-Filter nichts übrig bleibt → manuelle Prüfung
-            if plz_matches.empty:
-                logger.info(f"KundenNr {kunden_nr}: Keine PLZ-Treffer, zur Prüfung.")
-                for _, row in group.iterrows():
-                    row_dict = row.to_dict()
-                    row_dict['qualitaet'] = 'ZUR_PRUEFUNG (keine PLZ-Treffer)'
-                    review_results.append(row_dict)
-                continue
-
-            # Ab hier nur noch mit PLZ-gefilterten Ergebnissen weiterarbeiten
-            group = plz_matches
-
-            # ==================================================================
-            # SCHRITT 3: Einzelergebnis → automatisch eindeutig
-            # ==================================================================
-            if len(group) == 1:
-                row_dict = group.iloc[0].to_dict()
-                row_dict['qualitaet'] = 'OK'
-                unique_results.append(row_dict)
-                continue
-
-            # ==================================================================
-            # SCHRITT 4: Die "Weiche" — Strassenabgleich oder direkt Scoring?
-            # ==================================================================
-            street_to_find = self._has_street_in_searchstring(search_string)
-            processing_group = group  # Standard: alle Ergebnisse gehen ins Scoring
-
-            if street_to_find:
-                # --- SZENARIO B: Strasse im Suchbegriff vorhanden ---
-                # Zuerst Strasse abgleichen, dann nur passende Ergebnisse scoren
-                norm_street_to_find = self._normalize_text(street_to_find)
-                logger.debug(f"KundenNr {kunden_nr}: Szenario B (Strasse: '{street_to_find}')")
-
-                # Jedes Google-Ergebnis gegen die erwartete Strasse prüfen
-                street_matches_mask = group['street'].apply(
-                    lambda x: self._street_matches(street_to_find, str(x))
-                    if norm_street_to_find else False
-                )
-                street_matches = group[street_matches_mask]
-                street_mismatches = group[~street_matches_mask]
-
-                # Strassen-Fehlschläge → aussortieren
-                if not street_mismatches.empty:
-                    for _, row in street_mismatches.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['qualitaet'] = 'AUSSORTIERT (Strasse)'
-                        rejected_results.append(row_dict)
-
-                if len(street_matches) == 0:
-                    # Keine einzige Strasse passt → alle zur manuellen Prüfung
-                    logger.info(f"KundenNr {kunden_nr}: Keine Strassentreffer, zur Prüfung.")
-                    for _, row in group.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['qualitaet'] = 'ZUR_PRUEFUNG (keine Strassentreffer)'
-                        review_results.append(row_dict)
-                    continue
-                elif len(street_matches) == 1:
-                    # Genau 1 Strassentreffer → eindeutig
-                    row_dict = street_matches.iloc[0].to_dict()
-                    row_dict['qualitaet'] = 'OK (Strasse)'
-                    unique_results.append(row_dict)
-                    continue
-                else:
-                    # Mehrere Strassentreffer → Title-Scoring entscheidet
-                    processing_group = street_matches
-            else:
-                # --- SZENARIO A: Keine Strasse im Suchbegriff ---
-                # Alle Ergebnisse gehen direkt ins Title-Scoring
-                logger.debug(f"KundenNr {kunden_nr}: Szenario A (keine Strasse)")
-
-            # ==================================================================
-            # SCHRITT 5: Title-Scoring — Name des Suchbegriffs vs Google-Titel
-            # ==================================================================
-            scored_group = self._calculate_scores(processing_group)
-
-            # Ergebnisse aufteilen: hoher Score (≥80) vs niedriger Score (<80)
-            high_confidence_hits = scored_group[scored_group['score'] >= 80]
-            low_confidence_hits = scored_group[scored_group['score'] < 80]
-
-            if not high_confidence_hits.empty:
-                if len(high_confidence_hits) == 1:
-                    # --- GENAU 1 Treffer über 80 → eindeutig ---
-                    row_dict = high_confidence_hits.iloc[0].to_dict()
-                    row_dict['qualitaet'] = 'OK (Score)'
-                    unique_results.append(row_dict)
-                    # Alles unter 80 in derselben Gruppe → aussortieren
-                    for _, row in low_confidence_hits.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['qualitaet'] = 'AUSSORTIERT (Score)'
-                        rejected_results.append(row_dict)
-                else:
-                    # --- MEHRERE Treffer über 80 → mehrdeutig → manuelle Prüfung ---
-                    # Beispiel: 2 SPAR-Filialen in derselben PLZ, beide scoren hoch.
-                    # Algorithmus kann nicht entscheiden welche richtig ist.
-                    logger.info(f"KundenNr {kunden_nr}: {len(high_confidence_hits)} Treffer "
-                                f"über 80 → zur Prüfung (mehrdeutig)")
-                    for _, row in high_confidence_hits.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['qualitaet'] = 'ZUR_PRUEFUNG (mehrere hohe Treffer)'
-                        review_results.append(row_dict)
-                    for _, row in low_confidence_hits.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['qualitaet'] = 'AUSSORTIERT (Score)'
-                        rejected_results.append(row_dict)
-            else:
-                # --- DYNAMISCHER SCHWELLENWERT: Kein Score über 80 ---
-                # Prüfen ob der Abstand zwischen Platz 1 und Platz 2 gross genug ist
-                sorted_low_hits = low_confidence_hits.sort_values('score', ascending=False)
-
-                if len(sorted_low_hits) >= 2:
-                    score_1 = float(sorted_low_hits.iloc[0]['score'])  # Bester Score
-                    score_2 = float(sorted_low_hits.iloc[1]['score'])  # Zweitbester Score
-
-                    if score_1 - score_2 >= self.dynamic_gap_threshold:
-                        # Abstand gross genug → Bester Treffer ist wahrscheinlich korrekt
-                        best_hit = sorted_low_hits.iloc[0].to_dict()
-                        best_hit['qualitaet'] = 'OK (Dynamisch)'
-                        unique_results.append(best_hit)
-
-                        # Rest aussortieren
-                        for _, row in sorted_low_hits.iloc[1:].iterrows():
-                            row_dict = row.to_dict()
-                            row_dict['qualitaet'] = 'AUSSORTIERT (Dynamisch)'
-                            rejected_results.append(row_dict)
-
-                        logger.info(f"KundenNr {kunden_nr}: Dynamischer Treffer "
-                                    f"(Score {score_1:.0f} vs {score_2:.0f})")
-                    else:
-                        # Abstand zu klein → nicht unterscheidbar → manuelle Prüfung
-                        for _, row in sorted_low_hits.iterrows():
-                            row_dict = row.to_dict()
-                            row_dict['qualitaet'] = 'ZUR_PRUEFUNG (kein klarer Treffer)'
-                            review_results.append(row_dict)
-                else:
-                    # Nur 1 Ergebnis mit niedrigem Score → manuelle Prüfung
-                    for _, row in sorted_low_hits.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['qualitaet'] = 'ZUR_PRUEFUNG (niedriger Score)'
-                        review_results.append(row_dict)
+            self._process_customer(str(kunden_nr), group,
+                                   fertig, pruefung, nicht_moeglich, aussortiert)
 
         # ==================================================================
         # ERGEBNISSE SPEICHERN
         # ==================================================================
-        base_path = input_filepath.rsplit('.', 1)[0]
+        if output_dir:
+            target = Path(output_dir)
+        else:
+            quelle = Path(input_filepath)
+            target = quelle.parent / f"{quelle.stem}_ergebnis"
+        target.mkdir(parents=True, exist_ok=True)
 
         results = {}
-
-        # Die 3 Hauptdateien speichern
-        for name, data in [('eindeutig', unique_results),
-                           ('zur_pruefung', review_results),
-                           ('aussortiert', rejected_results)]:
-            filepath = f"{base_path}_{name}.csv"
-            out_df = pd.DataFrame(data)
-            # Interne Score-Spalte entfernen — gehört nicht in die Ausgabe
-            if 'score' in out_df.columns:
-                out_df = out_df.drop(columns=['score'])
+        for key, data in [('fertig_fuer_erp', fertig),
+                          ('zur_pruefung', pruefung),
+                          ('nicht_moeglich', nicht_moeglich),
+                          ('aussortiert', aussortiert)]:
+            filepath = target / OUTPUT_FILES[key]
+            out_df = pd.DataFrame(data, columns=OUTPUT_COLUMNS).fillna('')
             out_df.to_csv(filepath, sep=';', index=False, encoding='utf-8-sig')
-            results[name] = filepath
-            logger.info(f"{name}: {len(data)} Einträge → {filepath}")
-
-        # Die 4. Datei: Kunden mit leeren API-Ergebnissen zum nochmaligen Crawlen
-        # Format: Gleich wie die Original-Inputdatei → kann direkt in Flow 1 verwendet werden
-        if recrawl_results:
-            recrawl_filepath = f"{base_path}_erneut_crawlen.csv"
-            recrawl_df = pd.DataFrame(recrawl_results)
-            # Deduplizieren: Gleicher Kunde mit mehreren leeren Zeilen → nur 1 Eintrag
-            recrawl_df = recrawl_df.drop_duplicates(subset=['KundenNr'])
-            recrawl_df.to_csv(recrawl_filepath, sep=';', index=False, encoding='utf-8-sig')
-            results['erneut_crawlen'] = recrawl_filepath
-            logger.info(f"erneut_crawlen: {len(recrawl_df)} Einträge → {recrawl_filepath}")
-        else:
-            logger.info("Keine leeren Ergebnisse — keine Re-Crawl-Datei nötig.")
+            results[key] = str(filepath)
+            kunden = out_df['KundenNr'].nunique() if not out_df.empty else 0
+            logger.info(f"{key}: {kunden} Kunden, {len(out_df)} Zeilen → {filepath}")
 
         return results
+
+    # ==========================================================================
+    # Ein Kunde, eine Entscheidung
+    # ==========================================================================
+
+    def _process_customer(self, kunden_nr, group, fertig, pruefung,
+                          nicht_moeglich, aussortiert):
+        """
+        Entscheidet für genau einen Kunden und haengt das Ergebnis an die Listen an.
+
+        Jeder Kunde verlaesst diese Methode ueber genau einen der drei Wege
+        fertig / pruefung / nicht_moeglich. Eintraege in aussortiert sind reine
+        Diagnose und werden nur geschrieben, wenn der Kunde anderweitig entschieden
+        wurde — nie zusaetzlich zu einem Prueffall aus derselben Zeilengruppe.
+        """
+        stamm = group.iloc[0]
+        search_string = str(stamm.get('SearchString', '')).strip()
+        input_plz = str(stamm.get('PLZ', '')).strip()
+
+        # ==================================================================
+        # SCHRITT 0: Ohne Suchbegriff ist keine Entscheidung möglich
+        # ==================================================================
+        if not search_string:
+            nicht_moeglich.append(self._make_row(
+                stamm.to_dict(), 'NICHT_MOEGLICH (Eingabe unbrauchbar)', 0,
+                'Im Suchbegriff steht nichts. Ohne Name und Adresse ist keine Suche möglich.'))
+            return
+
+        # ==================================================================
+        # SCHRITT 1: Leere Ergebnisse erkennen
+        # ==================================================================
+        empty_mask = group.apply(self._is_empty_result, axis=1)
+        empty_rows = group[empty_mask]
+        filled_rows = group[~empty_mask]
+
+        if filled_rows.empty:
+            # Die Suche hat für diesen Kunden gar nichts geliefert → ③
+            logger.info(f"KundenNr {kunden_nr}: kein Ergebnis der Suche.")
+            nicht_moeglich.append(self._make_row(
+                stamm.to_dict(), 'NICHT_MOEGLICH (kein Ergebnis)', 0,
+                f'Die Suche nach "{search_string}" lieferte keinen einzigen Treffer.'))
+            return
+
+        # Einzelne leere Zeilen neben echten Treffern sind nur Rauschen → Diagnose
+        for _, row in empty_rows.iterrows():
+            aussortiert.append(self._make_row(
+                row.to_dict(), 'AUSSORTIERT (leeres Ergebnis)', 0,
+                'Leere Antwort der Suche; für diesen Kunden gibt es andere Treffer.'))
+
+        # ==================================================================
+        # SCHRITT 2: Score für jeden Kandidaten — wird nie mehr verworfen
+        # ==================================================================
+        scored = self._calculate_scores(filled_rows)
+
+        # ==================================================================
+        # SCHRITT 3: PLZ-Filter — Ergebnisse aus falscher Postleitzahl entfernen
+        # ==================================================================
+        plz_mask = scored.apply(lambda row: self._plz_matches(row, input_plz), axis=1)
+        plz_matches = scored[plz_mask]
+        plz_mismatches = scored[~plz_mask]
+
+        if plz_matches.empty:
+            # Keine einzige passende PLZ → alle Kandidaten zur Prüfung.
+            # Sie werden NICHT zusätzlich aussortiert (Invariante, Fehler B1).
+            logger.info(f"KundenNr {kunden_nr}: keine PLZ-Treffer, zur Prüfung.")
+            gefunden = self._aufzaehlung(
+                self._normalize_plz(r.get('postalCode', '')) for _, r in scored.iterrows())
+            grund = (f'Gesucht Postleitzahl {input_plz}, '
+                     f'gefunden {gefunden or "keine Angabe"}.')
+            for _, row in scored.iterrows():
+                pruefung.append(self._make_row(
+                    row.to_dict(), 'PRUEFUNG (keine PLZ-Treffer)', row['score'], grund))
+            return
+
+        for _, row in plz_mismatches.iterrows():
+            aussortiert.append(self._make_row(
+                row.to_dict(), 'AUSSORTIERT (PLZ)', row['score'],
+                f'Postleitzahl {self._normalize_plz(row.get("postalCode", ""))} '
+                f'statt {input_plz}.'))
+
+        group = plz_matches
+        street_to_find = self._has_street_in_searchstring(search_string)
+
+        # ==================================================================
+        # SCHRITT 4: Einzeltreffer prüfen (03_ENTSCHEIDUNGEN.md B2)
+        # ==================================================================
+        if len(group) == 1:
+            self._decide_single_hit(kunden_nr, group.iloc[0], street_to_find,
+                                    fertig, pruefung)
+            return
+
+        # ==================================================================
+        # SCHRITT 5: Die "Weiche" — Strassenabgleich oder direkt Scoring?
+        # ==================================================================
+        processing_group = group  # Standard: alle Ergebnisse gehen ins Scoring
+
+        if street_to_find:
+            # --- SZENARIO B: Strasse im Suchbegriff vorhanden ---
+            logger.debug(f"KundenNr {kunden_nr}: Szenario B (Strasse: '{street_to_find}')")
+
+            street_spalte = group['street'] if 'street' in group.columns \
+                else pd.Series([''] * len(group), index=group.index)
+            street_mask = street_spalte.apply(
+                lambda x: self._street_matches(street_to_find, str(x)))
+            street_matches = group[street_mask]
+            street_mismatches = group[~street_mask]
+
+            if len(street_matches) == 0:
+                # Keine einzige Strasse passt → alle zur Prüfung.
+                # Sie werden NICHT zusätzlich aussortiert (Fehler B1).
+                logger.info(f"KundenNr {kunden_nr}: keine Strassentreffer, zur Prüfung.")
+                gefunden = self._aufzaehlung(str(r.get('street', ''))
+                                             for _, r in group.iterrows())
+                grund = (f'Gesucht {street_to_find}, '
+                         f'gefunden {gefunden or "keine Strassenangabe"}.')
+                for _, row in group.iterrows():
+                    pruefung.append(self._make_row(
+                        row.to_dict(), 'PRUEFUNG (keine Strassentreffer)',
+                        row['score'], grund))
+                return
+
+            # Ab hier gibt es mindestens einen Strassentreffer — erst jetzt
+            # duerfen die Fehlschlaege in die Diagnosedatei.
+            for _, row in street_mismatches.iterrows():
+                aussortiert.append(self._make_row(
+                    row.to_dict(), 'AUSSORTIERT (Strasse)', row['score'],
+                    f'Gesucht {street_to_find}, dieser Treffer liegt an '
+                    f'{row.get("street", "") or "unbekannter Adresse"}.'))
+
+            if len(street_matches) == 1:
+                # Genau 1 Strassentreffer → eindeutig
+                row = street_matches.iloc[0]
+                fertig.append(self._make_row(
+                    row.to_dict(), 'OK (Strasse)', row['score'],
+                    f'Nur ein Treffer liegt an der gesuchten Adresse {street_to_find}: '
+                    f'"{row.get("title", "")}", {row.get("street", "")}. '
+                    f'Namensähnlichkeit {self._fmt_score(row["score"])} von 100.'))
+                return
+
+            # Mehrere Strassentreffer → Title-Scoring entscheidet
+            processing_group = street_matches
+        else:
+            # --- SZENARIO A: Keine Strasse im Suchbegriff ---
+            logger.debug(f"KundenNr {kunden_nr}: Szenario A (keine Strasse)")
+
+        # ==================================================================
+        # SCHRITT 6: Title-Scoring — Name des Suchbegriffs vs Google-Titel
+        # ==================================================================
+        self._decide_by_score(kunden_nr, processing_group, fertig, pruefung, aussortiert)
+
+    # ==========================================================================
+    # SCHRITT 4: Einzeltreffer-Regel B2
+    # ==========================================================================
+
+    def _decide_single_hit(self, kunden_nr, row, street_to_find, fertig, pruefung):
+        """
+        Ein einziger Kandidat hat den PLZ-Filter überlebt.
+
+        Nach ① nur, wenn mindestens eine Bedingung gilt (03_ENTSCHEIDUNGEN.md B2):
+            (1) Namensscore >= 60
+            (2) Strasse UND Hausnummer stimmen exakt überein
+        Sonst → ② PRUEFUNG (Einzeltreffer unsicher).
+        """
+        score = float(row['score'])
+        titel = str(row.get('title', ''))
+        google_street = str(row.get('street', ''))
+        score_text = self._fmt_score(score)
+
+        name_reicht = score >= self.SINGLE_HIT_NAME_THRESHOLD
+        adresse_exakt = bool(street_to_find) and self._street_and_number_exact(
+            street_to_find, google_street)
+
+        if name_reicht:
+            fertig.append(self._make_row(
+                row.to_dict(), 'OK (Einzeltreffer)', score,
+                f'Ein einziger Treffer übrig: "{titel}", '
+                f'Namensähnlichkeit {score_text} von 100.'))
+            return
+
+        if adresse_exakt:
+            # Rebranding: gleiche Adresse, neuer Name (Volg → Spar)
+            fertig.append(self._make_row(
+                row.to_dict(), 'OK (Einzeltreffer)', score,
+                f'Ein einziger Treffer übrig: "{titel}" an der gesuchten Adresse '
+                f'{street_to_find}. Der Name weicht ab (Ähnlichkeit {score_text} von 100), '
+                f'Strasse und Hausnummer stimmen exakt.'))
+            return
+
+        logger.info(f"KundenNr {kunden_nr}: Einzeltreffer unsicher (Score {score_text}).")
+        if street_to_find:
+            grund = (f'Nur ein Treffer: "{titel}" an {google_street or "unbekannter Adresse"}. '
+                     f'Der Name ist nur zu {score_text} von 100 ähnlich und die Adresse '
+                     f'stimmt nicht genau mit {street_to_find} überein.')
+        else:
+            grund = (f'Nur ein Treffer: "{titel}". Der Name ist nur zu {score_text} von 100 '
+                     f'ähnlich und im Suchbegriff steht keine Strasse zum Abgleich.')
+        pruefung.append(self._make_row(
+            row.to_dict(), 'PRUEFUNG (Einzeltreffer unsicher)', score, grund))
+
+    # ==========================================================================
+    # SCHRITT 6: Entscheid über den Namensscore
+    # ==========================================================================
+
+    def _decide_by_score(self, kunden_nr, scored_group, fertig, pruefung, aussortiert):
+        """
+        Entscheidet eine Gruppe von mindestens zwei Kandidaten über den Score.
+
+        Schwellenwerte unverändert aus 03_ENTSCHEIDUNGEN.md B3:
+        fester Wert 80, dynamischer Abstand 30.
+        """
+        ranked = scored_group.sort_values('score', ascending=False)
+        high = ranked[ranked['score'] >= self.HIGH_SCORE_THRESHOLD]
+        low = ranked[ranked['score'] < self.HIGH_SCORE_THRESHOLD]
+
+        if len(high) == 1:
+            # --- GENAU 1 Treffer über 80 → eindeutig ---
+            row = high.iloc[0]
+            fertig.append(self._make_row(
+                row.to_dict(), 'OK (Score)', row['score'],
+                f'Bester Treffer "{row.get("title", "")}" erreicht '
+                f'{self._fmt_score(row["score"])} von 100, alle anderen bleiben unter 80.'))
+            for _, other in low.iterrows():
+                aussortiert.append(self._make_row(
+                    other.to_dict(), 'AUSSORTIERT (Score)', other['score'],
+                    f'"{other.get("title", "")}" erreicht nur '
+                    f'{self._fmt_score(other["score"])} von 100.'))
+            return
+
+        if len(high) > 1:
+            # --- MEHRERE Treffer über 80 → mehrdeutig → manuelle Prüfung ---
+            # Beispiel: 2 SPAR-Filialen in derselben PLZ, beide scoren hoch.
+            logger.info(f"KundenNr {kunden_nr}: {len(high)} Treffer über 80 → zur Prüfung.")
+            erster, zweiter = high.iloc[0], high.iloc[1]
+            grund = (f'Mehrere Treffer gleich gut: "{erster.get("title", "")}" '
+                     f'({self._fmt_score(erster["score"])}) und "{zweiter.get("title", "")}" '
+                     f'({self._fmt_score(zweiter["score"])}).')
+            if len(high) > 2:
+                grund = (f'{len(high)} Treffer erreichen mindestens 80 Punkte, darunter '
+                         f'"{erster.get("title", "")}" ({self._fmt_score(erster["score"])}) '
+                         f'und "{zweiter.get("title", "")}" '
+                         f'({self._fmt_score(zweiter["score"])}).')
+            for _, row in high.iterrows():
+                pruefung.append(self._make_row(
+                    row.to_dict(), 'PRUEFUNG (mehrere hohe Treffer)', row['score'], grund))
+            for _, row in low.iterrows():
+                aussortiert.append(self._make_row(
+                    row.to_dict(), 'AUSSORTIERT (Score)', row['score'],
+                    f'"{row.get("title", "")}" erreicht nur '
+                    f'{self._fmt_score(row["score"])} von 100.'))
+            return
+
+        # --- DYNAMISCHER SCHWELLENWERT: Kein Score über 80 ---
+        if len(ranked) == 1:
+            # Kann über die Weiche nicht entstehen; Absicherung gegen künftige Aufrufer.
+            row = ranked.iloc[0]
+            pruefung.append(self._make_row(
+                row.to_dict(), 'PRUEFUNG (kein klarer Treffer)', row['score'],
+                f'Einziger Treffer "{row.get("title", "")}" erreicht nur '
+                f'{self._fmt_score(row["score"])} von 100.'))
+            return
+
+        erster = ranked.iloc[0]
+        zweiter = ranked.iloc[1]
+        score_1 = float(erster['score'])
+        score_2 = float(zweiter['score'])
+        abstand = score_1 - score_2
+
+        if abstand >= self.dynamic_gap_threshold:
+            # Abstand gross genug → bester Treffer ist wahrscheinlich korrekt
+            logger.info(f"KundenNr {kunden_nr}: dynamischer Treffer "
+                        f"(Score {score_1:.0f} vs {score_2:.0f}).")
+            fertig.append(self._make_row(
+                erster.to_dict(), 'OK (Dynamisch)', score_1,
+                f'"{erster.get("title", "")}" liegt mit '
+                f'{self._fmt_score(score_1)} von 100 klar vor dem nächsten Treffer '
+                f'"{zweiter.get("title", "")}" ({self._fmt_score(score_2)}).'))
+            for _, row in ranked.iloc[1:].iterrows():
+                aussortiert.append(self._make_row(
+                    row.to_dict(), 'AUSSORTIERT (Dynamisch)', row['score'],
+                    f'"{row.get("title", "")}" ({self._fmt_score(row["score"])}) liegt klar '
+                    f'hinter dem besten Treffer "{erster.get("title", "")}" '
+                    f'({self._fmt_score(score_1)}).'))
+            return
+
+        # Abstand zu klein → nicht unterscheidbar → manuelle Prüfung
+        grund = (f'Kein Treffer erreicht 80 Punkte: bester "{erster.get("title", "")}" '
+                 f'({self._fmt_score(score_1)}), zweiter "{zweiter.get("title", "")}" '
+                 f'({self._fmt_score(score_2)}), Abstand nur {self._fmt_score(abstand)}.')
+        for _, row in ranked.iterrows():
+            pruefung.append(self._make_row(
+                row.to_dict(), 'PRUEFUNG (kein klarer Treffer)', row['score'], grund))

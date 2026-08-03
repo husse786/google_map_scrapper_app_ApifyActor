@@ -25,9 +25,7 @@ Die Anwendung folgt einem modularen Design, bei dem jede Datei eine klare Verant
 
 google-maps-scraper-app/
 │
-├── main.py               \# Koordiniert den gesamten Ablauf und die UI
-│
-├── ui\_manager.py         \# Definiert die grafische Benutzeroberfläche
+├── cli.py                \# Kommandozeile für die Bereinigung
 │
 ├── csv\_processor.py      \# Liest und validiert die initiale CSV-Datei
 ├── csv\_postprocessor.py  \# Filtert die Ergebnisse auf die gewünschten Spalten
@@ -98,29 +96,32 @@ Diese Anleitung beschreibt, wie das Projekt von Grund auf eingerichtet wird.
 
 Stelle sicher, dass deine virtuelle Umgebung (`venv`) aktiv ist.
 
+> **Hinweis zum laufenden Umbau (Branch `umbau/webapp`):** Das Tkinter-Fenster
+> (`main.py`, `ui_manager.py`) ist entfallen. Die Anreicherung über Apify wird
+> in Phase 2 und 3 als Hintergrundlauf neu aufgebaut, die Bedienung im Browser
+> in Phase 5. Bis dahin läuft die Bereinigung über die Kommandozeile.
+> Der produktive Stand mit Oberfläche liegt weiterhin auf `main`.
+
 ### Schritt 1: Daten anreichern
 
-1. Starte die Anwendung über das Terminal:
-
-    ```bash
-    python main.py
-    ```
-
-2. Klicke auf den Button **"1. Quelldatei anreichern"**.
-3. Wähle deine CSV-Quelldatei aus.
-    * **Anforderung an die CSV:** Die Datei muss durch Semikolon (`;`) getrennt sein und die Spalten `SearchString`, `PLZ` und `KundenNr` enthalten.
-4. Der Prozess startet und verarbeitet die Anfragen parallel. Verfolge den Fortschritt im Log-Fenster.
-5. Nach Abschluss findest du im selben Ordner die Ergebnisdateien, u.a. `DEINEDATEI_optimierte_daten.csv`.
+Wird gerade umgebaut. Der bisherige Ablauf liegt im Branch `main`.
 
 ### Schritt 2: Daten bereinigen
 
-1. Klicke auf den Button **"2. Optimierte Datei bereinigen"**.
-2. Wähle die in Schritt 1 erstellte `..._optimierte_daten.csv`-Datei aus.
-3. Der Bereinigungsprozess startet und wendet die intelligente Scoring-Logik an.
-4. Nach Abschluss findest du drei neue Dateien in deinem Ordner:
-    * **`..._eindeutig.csv`:** Enthält alle als sicher eingestuften Treffer.
-    * **`..._zur_pruefung.csv`:** Enthält alle unklaren oder mehrdeutigen Fälle zur manuellen Kontrolle.
-    * **`..._aussortiert.csv`:** Enthält alle eindeutig falschen Treffer.
+1. Bereinigung starten:
+
+    ```bash
+    python cli.py Daten/DEINEDATEI_optimierte_daten.csv
+    ```
+
+2. Neben der Eingabedatei entsteht ein Ordner `DEINEDATEI_optimierte_daten_ergebnis`
+    mit vier Dateien. Ein anderer Zielordner geht mit `--ausgabe ORDNER`.
+    * **`fertig_fuer_erp.csv`:** automatisch akzeptiert, direkt importierbar.
+    * **`zur_pruefung.csv`:** unklare Fälle, ein Mensch entscheidet.
+    * **`nicht_moeglich.csv`:** kein verwertbares Ergebnis.
+    * **`aussortiert.csv`:** verworfene Kandidaten, nur zur Nachschau.
+3. Jede Zeile der drei Hauptdateien trägt `qualitaet`, `score` und einen
+    deutschen Klartextgrund. Jeder Kunde steht in genau einer der drei Dateien.
 
 ## Anhang: Detaillierte Logik des Datenbereinigungs-Moduls
 

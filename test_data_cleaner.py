@@ -1,487 +1,230 @@
 # test_data_cleaner.py
-# Test suite for data_cleaner.py algorithm
-# Purpose: Validate the cleaning logic and identify edge cases / improvements
+# Test suite for data_cleaner.py algorithm.
+#
+# These are the eight scenarios of the original suite, kept one-to-one but
+# converted to pytest and updated to the output contract of 02_DATENVERTRAG.md:
+# four files with fixed names, qualitaet from the closed list, score and grund
+# on every row.
 
 import pandas as pd
-import tempfile
-import os
-from pathlib import Path
+import pytest
+
 from data_cleaner import DataCleaner
+
 
 # ============================================================================
 # TEST UTILITIES
 # ============================================================================
 
-def create_test_csv(data: list, filename: str) -> str:
-    """Create a test CSV file and return its path."""
-    df = pd.DataFrame(data)
-    temp_dir = tempfile.gettempdir()
-    filepath = os.path.join(temp_dir, filename)
-    df.to_csv(filepath, sep=';', index=False, encoding='utf-8-sig')
-    return filepath
+@pytest.fixture
+def cleaner():
+    return DataCleaner(dynamic_gap_threshold=30)
 
-def cleanup_test_files(base_path: str):
-    """Remove all test output files."""
-    patterns = ['_eindeutig.csv', '_zur_pruefung.csv', '_aussortiert.csv', '_erneut_crawlen.csv']
-    for pattern in patterns:
-        filepath = f"{base_path}{pattern}"
-        if os.path.exists(filepath):
-            os.remove(filepath)
 
-# ============================================================================
-# TEST CASES
-# ============================================================================
+def run_cleaner(cleaner: DataCleaner, rows: list, tmp_path) -> dict:
+    """Write rows to a CSV, run the cleaner, return the four result frames."""
+    source = tmp_path / 'eingabe.csv'
+    pd.DataFrame(rows).to_csv(source, sep=';', index=False, encoding='utf-8-sig')
 
-class TestDataCleaner:
-    """Test suite for DataCleaner algorithm."""
+    paths = cleaner.clean_data(str(source), str(tmp_path / 'ergebnis'))
 
-    def __init__(self):
-        self.cleaner = DataCleaner(dynamic_gap_threshold=30)
+    return {
+        key: pd.read_csv(path, sep=';', encoding='utf-8-sig', dtype=str).fillna('')
+        for key, path in paths.items()
+    }
 
-    # ========================================================================
-    # TEST 1: Empty Results (should go to erneut_crawlen.csv)
-    # ========================================================================
-    def test_empty_results(self):
-        """Test: Empty API results are detected and saved for re-crawl."""
-        print("\n" + "="*70)
-        print("TEST 1: Empty Results Detection")
-        print("="*70)
 
-        data = [
-            {
-                'SearchString': 'Denner, Hauptstrasse 5, 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': '',           # Empty!
-                'address': '',         # Empty!
-                'street': '',          # Empty!
-                'postalCode': '',      # Empty!
-                'placeId': '',         # Empty — triggers "is_empty_result"
-                'city': '',
-                'phone': ''
-            }
-        ]
+def kunde(**overrides) -> dict:
+    """A fully populated candidate row; override what the test cares about."""
+    row = {
+        'SearchString': 'Denner, Hauptstrasse 5, 5620 Bremgarten',
+        'PLZ': '5620',
+        'Stadt': 'Bremgarten',
+        'KundenNr': 'K001',
+        'title': 'Denner Bremgarten',
+        'address': 'Hauptstrasse 5, 5620 Bremgarten',
+        'street': 'Hauptstrasse 5',
+        'postalCode': '5620',
+        'city': 'Bremgarten',
+        'placeId': 'PLACE_1',
+        'phone': '',
+    }
+    row.update(overrides)
+    return row
 
-        csv_path = create_test_csv(data, 'test_empty.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: Should create erneut_crawlen.csv (not unique/review/rejected)
-            assert 'erneut_crawlen' in results, "Empty results should create erneut_crawlen.csv"
-
-            recrawl_df = pd.read_csv(results['erneut_crawlen'], sep=';', encoding='utf-8-sig')
-            assert len(recrawl_df) == 1, "Should have 1 row in erneut_crawlen"
-            assert recrawl_df.iloc[0]['SearchString'] == 'Denner, Hauptstrasse 5, 5620 Bremgarten'
-
-            print("✅ PASS: Empty results correctly identified and saved for re-crawl")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
-
-    # ========================================================================
-    # TEST 2: Single Result (should be automatically unique)
-    # ========================================================================
-    def test_single_result_automatic_match(self):
-        """Test: Single result per customer = automatic unique match."""
-        print("\n" + "="*70)
-        print("TEST 2: Single Result = Automatic Match")
-        print("="*70)
-
-        data = [
-            {
-                'SearchString': 'Denner, Hauptstrasse 5, 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Denner Bremgarten',
-                'address': 'Hauptstrasse 5, 5620 Bremgarten',
-                'street': 'Hauptstrasse 5',
-                'postalCode': '5620',
-                'placeId': 'ChIJ123',
-                'city': 'Bremgarten',
-                'phone': '0564123456'
-            }
-        ]
-
-        csv_path = create_test_csv(data, 'test_single.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: Should go to eindeutig.csv
-            unique_df = pd.read_csv(results['eindeutig'], sep=';', encoding='utf-8-sig')
-            assert len(unique_df) == 1, "Single valid result should go to eindeutig"
-            assert unique_df.iloc[0]['title'] == 'Denner Bremgarten'
-            assert unique_df.iloc[0]['qualitaet'] == 'OK'
-
-            print("✅ PASS: Single result correctly marked as unique (OK)")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
-
-    # ========================================================================
-    # TEST 3: PLZ Filter (wrong postal code = rejected)
-    # ========================================================================
-    def test_plz_filter(self):
-        """Test: Results with wrong postal code are filtered out."""
-        print("\n" + "="*70)
-        print("TEST 3: PLZ Filter")
-        print("="*70)
-
-        data = [
-            {
-                'SearchString': 'Denner, Hauptstrasse 5, 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Denner Bremgarten',
-                'address': 'Hauptstrasse 5, 5620 Bremgarten',
-                'street': 'Hauptstrasse 5',
-                'postalCode': '5620',
-                'placeId': 'ChIJ123',
-                'city': 'Bremgarten',
-                'phone': ''
-            },
-            {
-                'SearchString': 'Denner, Hauptstrasse 5, 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Denner Zurich',
-                'address': 'Bahnhofstrasse 10, 8000 Zurich',
-                'street': 'Bahnhofstrasse 10',
-                'postalCode': '8000',  # Wrong PLZ!
-                'placeId': 'ChIJ456',
-                'city': 'Zurich',
-                'phone': ''
-            }
-        ]
-
-        csv_path = create_test_csv(data, 'test_plz_filter.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: First result (correct PLZ) goes to unique
-            unique_df = pd.read_csv(results['eindeutig'], sep=';', encoding='utf-8-sig')
-            assert len(unique_df) == 1, "Should have 1 unique result"
-
-            # Check: Second result (wrong PLZ) goes to rejected
-            rejected_df = pd.read_csv(results['aussortiert'], sep=';', encoding='utf-8-sig')
-            assert len(rejected_df) == 1, "Should have 1 rejected result"
-            assert 'PLZ' in rejected_df.iloc[0]['qualitaet'], "Should mention PLZ in rejection reason"
-
-            print("✅ PASS: PLZ filter correctly rejects wrong postal codes")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
-
-    # ========================================================================
-    # TEST 4: Street Matching (Szenario B)
-    # ========================================================================
-    def test_street_matching_scenario_b(self):
-        """Test: Street matching when street is in SearchString."""
-        print("\n" + "="*70)
-        print("TEST 4: Street Matching (Szenario B)")
-        print("="*70)
-
-        data = [
-            {
-                'SearchString': 'Restaurant, Seetalstrasse 60, 5703 Seon',
-                'PLZ': '5703',
-                'Stadt': 'Seon',
-                'KundenNr': 'K001',
-                'title': 'Restaurant Waldegg',
-                'address': 'Seetalstrasse 60, 5703 Seon',
-                'street': 'Seetalstrasse 60',
-                'postalCode': '5703',
-                'placeId': 'ChIJ123',
-                'city': 'Seon',
-                'phone': ''
-            },
-            {
-                'SearchString': 'Restaurant, Seetalstrasse 60, 5703 Seon',
-                'PLZ': '5703',
-                'Stadt': 'Seon',
-                'KundenNr': 'K001',
-                'title': 'Restaurant Alpenrose',
-                'address': 'Dorfstrasse 10, 5703 Seon',
-                'street': 'Dorfstrasse 10',  # Different street!
-                'postalCode': '5703',
-                'placeId': 'ChIJ456',
-                'city': 'Seon',
-                'phone': ''
-            }
-        ]
-
-        csv_path = create_test_csv(data, 'test_street_matching.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: Only Seetalstrasse match goes to unique
-            unique_df = pd.read_csv(results['eindeutig'], sep=';', encoding='utf-8-sig')
-            assert len(unique_df) == 1, "Should have 1 unique result (street match)"
-            assert 'Waldegg' in unique_df.iloc[0]['title'], "Should match Waldegg (Seetalstrasse)"
-
-            # Check: Dorfstrasse match goes to rejected (street mismatch)
-            rejected_df = pd.read_csv(results['aussortiert'], sep=';', encoding='utf-8-sig')
-            assert len(rejected_df) == 1, "Should have 1 rejected result (street mismatch)"
-            assert 'Strasse' in rejected_df.iloc[0]['qualitaet'], "Should mention Strasse rejection"
-
-            print("✅ PASS: Street matching correctly filters mismatched streets")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
-
-    # ========================================================================
-    # TEST 5: Title Scoring — High Confidence (≥80)
-    # ========================================================================
-    def test_title_scoring_high_confidence(self):
-        """Test: Title score ≥80 = unique, <80 = rejected."""
-        print("\n" + "="*70)
-        print("TEST 5: Title Scoring — High Confidence (≥80)")
-        print("="*70)
-
-        data = [
-            {
-                'SearchString': 'Coop Supermarkt, , 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Coop Supermarkt Bremgarten',  # High score expected
-                'address': 'Hauptstrasse 5, 5620 Bremgarten',
-                'street': 'Hauptstrasse 5',
-                'postalCode': '5620',
-                'placeId': 'ChIJ123',
-                'city': 'Bremgarten',
-                'phone': ''
-            },
-            {
-                'SearchString': 'Coop Supermarkt, , 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Denner Shop',  # Low score expected
-                'address': 'Dorfstrasse 10, 5620 Bremgarten',
-                'street': 'Dorfstrasse 10',
-                'postalCode': '5620',
-                'placeId': 'ChIJ456',
-                'city': 'Bremgarten',
-                'phone': ''
-            }
-        ]
-
-        csv_path = create_test_csv(data, 'test_scoring_high.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: First result (high score) goes to unique
-            unique_df = pd.read_csv(results['eindeutig'], sep=';', encoding='utf-8-sig')
-            assert len(unique_df) == 1, "Should have 1 unique result (high score)"
-            assert 'Coop' in unique_df.iloc[0]['title'], "Should match Coop"
-
-            # Check: Second result (low score) goes to rejected
-            rejected_df = pd.read_csv(results['aussortiert'], sep=';', encoding='utf-8-sig')
-            assert len(rejected_df) == 1, "Should have 1 rejected result (low score)"
-
-            print("✅ PASS: Title scoring correctly identifies high-confidence matches")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
-
-    # ========================================================================
-    # TEST 6: Dynamic Threshold (gap ≥30 between 1st and 2nd score)
-    # ========================================================================
-    def test_dynamic_threshold(self):
-        """Test: No score ≥80, but gap ≥30 between 1st/2nd = unique (dynamic)."""
-        print("\n" + "="*70)
-        print("TEST 6: Dynamic Threshold (gap ≥30)")
-        print("="*70)
-
-        data = [
-            {
-                'SearchString': 'Coiffeur Baumann, , 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Coiffeur Baumann',  # Score: ~75
-                'address': 'Hauptstrasse 5, 5620 Bremgarten',
-                'street': 'Hauptstrasse 5',
-                'postalCode': '5620',
-                'placeId': 'ChIJ123',
-                'city': 'Bremgarten',
-                'phone': ''
-            },
-            {
-                'SearchString': 'Coiffeur Baumann, , 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Coiffeur Shop',  # Score: ~40 (gap = 35)
-                'address': 'Dorfstrasse 10, 5620 Bremgarten',
-                'street': 'Dorfstrasse 10',
-                'postalCode': '5620',
-                'placeId': 'ChIJ456',
-                'city': 'Bremgarten',
-                'phone': ''
-            }
-        ]
-
-        csv_path = create_test_csv(data, 'test_dynamic.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: First result should go to unique (dynamic threshold)
-            unique_df = pd.read_csv(results['eindeutig'], sep=';', encoding='utf-8-sig')
-            assert len(unique_df) >= 1, "Should have at least 1 unique result (dynamic)"
-
-            print("✅ PASS: Dynamic threshold correctly applies gap logic")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
-
-    # ========================================================================
-    # TEST 7: Multiple High Scores → Review
-    # ========================================================================
-    def test_multiple_high_scores_requires_review(self):
-        """Test: Multiple results with score ≥80 = ambiguous → review."""
-        print("\n" + "="*70)
-        print("TEST 7: Multiple High Scores → Manual Review")
-        print("="*70)
-
-        data = [
-            {
-                'SearchString': 'Spar Supermarkt, , 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Spar Supermarkt Bremgarten',
-                'address': 'Hauptstrasse 5, 5620 Bremgarten',
-                'street': 'Hauptstrasse 5',
-                'postalCode': '5620',
-                'placeId': 'ChIJ123',
-                'city': 'Bremgarten',
-                'phone': ''
-            },
-            {
-                'SearchString': 'Spar Supermarkt, , 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Spar Markt Bremgarten',
-                'address': 'Bahnhofstrasse 3, 5620 Bremgarten',
-                'street': 'Bahnhofstrasse 3',
-                'postalCode': '5620',
-                'placeId': 'ChIJ456',
-                'city': 'Bremgarten',
-                'phone': ''
-            }
-        ]
-
-        csv_path = create_test_csv(data, 'test_multi_high.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: Both should go to review (ambiguous)
-            review_df = pd.read_csv(results['zur_pruefung'], sep=';', encoding='utf-8-sig')
-            assert len(review_df) >= 2, "Multiple high scores should go to review"
-            assert 'mehrere hohe Treffer' in review_df.iloc[0]['qualitaet'] or len(review_df) > 1
-
-            print("✅ PASS: Multiple high-score matches correctly marked for manual review")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
-
-    # ========================================================================
-    # TEST 8: Umlauts & Normalization
-    # ========================================================================
-    def test_umlaut_normalization(self):
-        """Test: Umlauts (ä, ö, ü) are correctly normalized."""
-        print("\n" + "="*70)
-        print("TEST 8: Umlaut Normalization")
-        print("="*70)
-
-        # Input has umlaut, Google result doesn't (normalized)
-        data = [
-            {
-                'SearchString': 'Bäckerei Müller, Strasse 10, 5620 Bremgarten',
-                'PLZ': '5620',
-                'Stadt': 'Bremgarten',
-                'KundenNr': 'K001',
-                'title': 'Baeckerei Mueller Bremgarten',  # Normalized version
-                'address': 'Strasse 10, 5620 Bremgarten',
-                'street': 'Strasse 10',
-                'postalCode': '5620',
-                'placeId': 'ChIJ123',
-                'city': 'Bremgarten',
-                'phone': ''
-            }
-        ]
-
-        csv_path = create_test_csv(data, 'test_umlauts.csv')
-        base_path = csv_path.rsplit('.', 1)[0]
-
-        try:
-            results = self.cleaner.clean_data(csv_path)
-
-            # Check: Should be recognized as match despite umlaut difference
-            unique_df = pd.read_csv(results['eindeutig'], sep=';', encoding='utf-8-sig')
-            assert len(unique_df) == 1, "Umlaut normalization should match Bäckerei with Baeckerei"
-
-            print("✅ PASS: Umlauts correctly normalized for matching")
-        finally:
-            cleanup_test_files(base_path)
-            os.remove(csv_path)
 
 # ============================================================================
-# RUN ALL TESTS
+# TEST 1: Empty results
 # ============================================================================
 
-if __name__ == '__main__':
-    print("\n" + "="*70)
-    print("DATA CLEANER ALGORITHM TEST SUITE")
-    print("="*70)
+def test_empty_results(cleaner, tmp_path):
+    """A customer without any API result belongs in file 3, nowhere else."""
+    rows = [kunde(title='', address='', street='', postalCode='', city='', placeId='')]
 
-    tester = TestDataCleaner()
+    out = run_cleaner(cleaner, rows, tmp_path)
 
-    tests = [
-        tester.test_empty_results,
-        tester.test_single_result_automatic_match,
-        tester.test_plz_filter,
-        tester.test_street_matching_scenario_b,
-        tester.test_title_scoring_high_confidence,
-        tester.test_dynamic_threshold,
-        tester.test_multiple_high_scores_requires_review,
-        tester.test_umlaut_normalization,
+    assert len(out['nicht_moeglich']) == 1
+    assert out['nicht_moeglich'].iloc[0]['qualitaet'] == 'NICHT_MOEGLICH (kein Ergebnis)'
+    assert out['nicht_moeglich'].iloc[0]['SearchString'] == \
+        'Denner, Hauptstrasse 5, 5620 Bremgarten'
+    assert out['fertig_fuer_erp'].empty
+    assert out['zur_pruefung'].empty
+
+
+# ============================================================================
+# TEST 2: Single result
+# ============================================================================
+
+def test_single_result_automatic_match(cleaner, tmp_path):
+    """One surviving candidate with a matching name goes to file 1."""
+    rows = [kunde()]
+
+    out = run_cleaner(cleaner, rows, tmp_path)
+
+    assert len(out['fertig_fuer_erp']) == 1
+    hit = out['fertig_fuer_erp'].iloc[0]
+    assert hit['title'] == 'Denner Bremgarten'
+    assert hit['qualitaet'] == 'OK (Einzeltreffer)'
+    assert float(hit['score']) >= 60
+
+
+# ============================================================================
+# TEST 3: PLZ filter
+# ============================================================================
+
+def test_plz_filter(cleaner, tmp_path):
+    """A candidate from the wrong postal code is dropped, not decided upon."""
+    rows = [
+        kunde(),
+        kunde(title='Denner Zurich', address='Bahnhofstrasse 10, 8000 Zurich',
+              street='Bahnhofstrasse 10', postalCode='8000', city='Zurich',
+              placeId='PLACE_2'),
     ]
 
-    passed = 0
-    failed = 0
+    out = run_cleaner(cleaner, rows, tmp_path)
 
-    for test in tests:
-        try:
-            test()
-            passed += 1
-        except AssertionError as e:
-            print(f"❌ FAIL: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"❌ ERROR: {e}")
-            failed += 1
+    assert len(out['fertig_fuer_erp']) == 1
+    assert len(out['aussortiert']) == 1
+    assert out['aussortiert'].iloc[0]['qualitaet'] == 'AUSSORTIERT (PLZ)'
+    assert '8000' in out['aussortiert'].iloc[0]['grund']
 
-    print("\n" + "="*70)
-    print(f"RESULTS: {passed} passed, {failed} failed")
-    print("="*70 + "\n")
+
+# ============================================================================
+# TEST 4: Street matching (Szenario B)
+# ============================================================================
+
+def test_street_matching_scenario_b(cleaner, tmp_path):
+    """With a street in the search string, only candidates on it survive."""
+    rows = [
+        kunde(SearchString='Restaurant, Seetalstrasse 60, 5703 Seon', PLZ='5703',
+              Stadt='Seon', title='Restaurant Waldegg',
+              address='Seetalstrasse 60, 5703 Seon', street='Seetalstrasse 60',
+              postalCode='5703', city='Seon'),
+        kunde(SearchString='Restaurant, Seetalstrasse 60, 5703 Seon', PLZ='5703',
+              Stadt='Seon', title='Restaurant Alpenrose',
+              address='Dorfstrasse 10, 5703 Seon', street='Dorfstrasse 10',
+              postalCode='5703', city='Seon', placeId='PLACE_2'),
+    ]
+
+    out = run_cleaner(cleaner, rows, tmp_path)
+
+    assert len(out['fertig_fuer_erp']) == 1
+    assert out['fertig_fuer_erp'].iloc[0]['title'] == 'Restaurant Waldegg'
+    assert out['fertig_fuer_erp'].iloc[0]['qualitaet'] == 'OK (Strasse)'
+    assert len(out['aussortiert']) == 1
+    assert out['aussortiert'].iloc[0]['qualitaet'] == 'AUSSORTIERT (Strasse)'
+
+
+# ============================================================================
+# TEST 5: Title scoring, exactly one hit above 80
+# ============================================================================
+
+def test_title_scoring_high_confidence(cleaner, tmp_path):
+    """Without a street, one hit above 80 and one below is decided by score."""
+    rows = [
+        kunde(SearchString='Coop Supermarkt, , 5620 Bremgarten',
+              title='Coop Supermarkt Bremgarten'),
+        kunde(SearchString='Coop Supermarkt, , 5620 Bremgarten', title='Denner Shop',
+              address='Dorfstrasse 10, 5620 Bremgarten', street='Dorfstrasse 10',
+              placeId='PLACE_2'),
+    ]
+
+    out = run_cleaner(cleaner, rows, tmp_path)
+
+    assert len(out['fertig_fuer_erp']) == 1
+    hit = out['fertig_fuer_erp'].iloc[0]
+    assert 'Coop' in hit['title']
+    assert hit['qualitaet'] == 'OK (Score)'
+    assert float(hit['score']) >= 80
+
+    assert len(out['aussortiert']) == 1
+    assert out['aussortiert'].iloc[0]['qualitaet'] == 'AUSSORTIERT (Score)'
+
+
+# ============================================================================
+# TEST 6: Dynamic threshold, gap of 30 between first and second
+# ============================================================================
+
+def test_dynamic_threshold(cleaner, tmp_path):
+    """No hit reaches 80, but the leader is 30 points ahead: file 1.
+
+    The original data of this test ("Coiffeur Baumann" / "Coiffeur Shop")
+    scored 100 and 83 and therefore never reached the dynamic branch. The
+    titles below score 80 and 26.
+    """
+    rows = [
+        kunde(SearchString='Kiosk Alpenblick, , 5620 Bremgarten', title='Kiosk Alpenrose'),
+        kunde(SearchString='Kiosk Alpenblick, , 5620 Bremgarten', title='Blumen Ecke',
+              address='Dorfstrasse 10, 5620 Bremgarten', street='Dorfstrasse 10',
+              placeId='PLACE_2'),
+    ]
+
+    out = run_cleaner(cleaner, rows, tmp_path)
+
+    assert len(out['fertig_fuer_erp']) == 1
+    hit = out['fertig_fuer_erp'].iloc[0]
+    assert hit['title'] == 'Kiosk Alpenrose'
+    assert hit['qualitaet'] == 'OK (Dynamisch)'
+    assert float(hit['score']) < 80
+
+    assert len(out['aussortiert']) == 1
+    assert out['aussortiert'].iloc[0]['qualitaet'] == 'AUSSORTIERT (Dynamisch)'
+
+
+# ============================================================================
+# TEST 7: Several hits above 80
+# ============================================================================
+
+def test_multiple_high_scores_requires_review(cleaner, tmp_path):
+    """Two equally good hits cannot be decided automatically."""
+    rows = [
+        kunde(SearchString='Spar Supermarkt, , 5620 Bremgarten',
+              title='Spar Supermarkt Bremgarten'),
+        kunde(SearchString='Spar Supermarkt, , 5620 Bremgarten',
+              title='Spar Markt Bremgarten', address='Bahnhofstrasse 3, 5620 Bremgarten',
+              street='Bahnhofstrasse 3', placeId='PLACE_2'),
+    ]
+
+    out = run_cleaner(cleaner, rows, tmp_path)
+
+    assert len(out['zur_pruefung']) == 2
+    assert set(out['zur_pruefung']['qualitaet']) == {'PRUEFUNG (mehrere hohe Treffer)'}
+    assert out['fertig_fuer_erp'].empty
+
+
+# ============================================================================
+# TEST 8: Umlauts and normalisation
+# ============================================================================
+
+def test_umlaut_normalization(cleaner, tmp_path):
+    """Baeckerei and Bäckerei are the same name."""
+    rows = [
+        kunde(SearchString='Bäckerei Müller, Strasse 10, 5620 Bremgarten',
+              title='Baeckerei Mueller Bremgarten',
+              address='Strasse 10, 5620 Bremgarten', street='Strasse 10'),
+    ]
+
+    out = run_cleaner(cleaner, rows, tmp_path)
+
+    assert len(out['fertig_fuer_erp']) == 1
+    assert float(out['fertig_fuer_erp'].iloc[0]['score']) >= 60
