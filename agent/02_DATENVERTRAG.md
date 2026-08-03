@@ -190,8 +190,15 @@ NEU → VALIDIERT → LAEUFT → FERTIG
 | `FEHLER` | technischer Abbruch (Kontingent, Netz, Absturz) |
 
 `kunden_erledigt` wird **nach jedem Kunden** geschrieben, nicht am Ende.
-Beim Start prüft die App auf `LAEUFT` aus einem früheren Lauf und bietet
-Fortsetzung ab `kunden_erledigt` an.
+Er dient der **Anzeige**, nicht der Steuerung: bei parallelen Arbeitern hinkt er
+naturgemäss hinterher (laufen sechs, und zwei mittlere werden zuerst fertig,
+steht der Zähler auf dem tiefsten zusammenhängenden Stand).
+
+**Der Wiederaufsatzpunkt ist die Tabelle `kunde`, nicht der Zähler.**
+Fortgesetzt wird für jede `kunden_nr` aus der Eingabe, zu der noch keine Zeile
+in `kunde` steht. `kunden_erledigt` wird beim Fortsetzen aus der Tabelle neu
+gesetzt. Tests dürfen den Zähler nicht als Sollwert für die Anzahl
+nachzuholender Kunden verwenden.
 
 ---
 

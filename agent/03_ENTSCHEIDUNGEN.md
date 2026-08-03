@@ -107,7 +107,7 @@ und Eingangs-versus-Gebäudemitte.
 
 | Grenze | Wert | Zweck |
 |---|---|---|
-| Timeout pro API-Aufruf | **90 Sekunden** | fehlt heute völlig; hängender Lauf blockiert unbegrenzt |
+| Timeout pro API-Aufruf | **180 Sekunden** | fehlt heute völlig; hängender Lauf blockiert unbegrenzt. Von 90 s heraufgesetzt: gemessene Kaltstarts lagen bei 83, 87 und **91** Sekunden — 90 s hätte gesunde Aufrufe fälschlich nach ③ geschoben. Der Timeout soll Hänger stoppen, nicht Tempo erzwingen |
 | Verhalten bei Timeout | wie leeres Ergebnis → ③ | kein Retry, kein Zusatzkosten |
 | Parallele Worker (Apify) | **6** | produktiv getestet, stabil |
 | Maximale Zeilen pro Upload | **10'000** | Schutz vor versehentlichem Kontingentverbrauch |
