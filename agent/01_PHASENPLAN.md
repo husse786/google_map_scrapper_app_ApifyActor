@@ -99,6 +99,10 @@ Kein Web, kein Worker, kein Google.
 ### Umfang
 
 - Hintergrund-Thread, ein Job zur Zeit, zweiter Start wird abgewiesen
+- **Sechs parallele Worker** (`03_ENTSCHEIDUNGEN.md` C). Sie lagen im Altcode in
+  `main.py` Zeile 235 (`ThreadPoolExecutor(max_workers=6)`) und sind mit dessen
+  Löschung in Phase 1 verschwunden. Referenz: `git show a17150e~1:main.py`.
+  Ohne sie dauert ein Batch statt rund zwei Stunden ein Vielfaches.
 - `kunden_erledigt` nach **jedem** Kunden in die Datenbank
 - Zustände nach `02_DATENVERTRAG.md` §6
 - Wiederaufnahme: beim Start `LAEUFT` erkennen, ab `kunden_erledigt` fortsetzen
@@ -112,6 +116,12 @@ Kein Web, kein Worker, kein Google.
 - [ ] Zweiter Start bei laufendem Job wird mit Hinweis abgewiesen
 - [ ] Fortschrittszahl entspricht während des Laufs jederzeit der Anzahl verarbeiteter Kunden
 - [ ] Drei Dateien werden geschrieben, Invariante aus `02_DATENVERTRAG.md` §2 gilt
+- [ ] Sechs Worker laufen parallel, nachgewiesen gegen den `FakeProvider`
+      (künstliche Verzögerung: Gesamtzeit liegt nahe bei einem Sechstel der
+      sequentiellen Zeit)
+- [ ] Abbruch und Wiederaufnahme funktionieren **mit** aktiver Parallelität,
+      nicht nur sequentiell — kein Kunde doppelt, keiner verloren
+- [ ] Der Timeout aus Phase 2 greift weiterhin je Aufruf, nicht je Lauf
 
 ---
 
