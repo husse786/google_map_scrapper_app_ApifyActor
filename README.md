@@ -25,7 +25,13 @@ Die Anwendung folgt einem modularen Design, bei dem jede Datei eine klare Verant
 
 google-maps-scraper-app/
 │
-├── cli.py                \# Kommandozeile für die Bereinigung
+├── cli.py                \# Kommandozeile: Lauf und Bereinigung
+│
+├── pipeline.py           \# Ein Lauf: Eingabe → Provider → Datenbank → drei Dateien
+├── place\_provider.py     \# Candidate und die Provider-Schnittstelle
+├── apify\_provider.py     \# Datenquelle Apify — kennt als einziges Modul deren Felder
+├── fake\_provider.py      \# Datenquelle mit festen Antworten, für Tests ohne Kosten
+├── db.py                 \# SQLite: Jobs, Kunden, Kandidaten
 │
 ├── csv\_processor.py      \# Liest und validiert die initiale CSV-Datei
 ├── csv\_postprocessor.py  \# Filtert die Ergebnisse auf die gewünschten Spalten
@@ -97,21 +103,35 @@ Diese Anleitung beschreibt, wie das Projekt von Grund auf eingerichtet wird.
 Stelle sicher, dass deine virtuelle Umgebung (`venv`) aktiv ist.
 
 > **Hinweis zum laufenden Umbau (Branch `umbau/webapp`):** Das Tkinter-Fenster
-> (`main.py`, `ui_manager.py`) ist entfallen. Die Anreicherung über Apify wird
-> in Phase 2 und 3 als Hintergrundlauf neu aufgebaut, die Bedienung im Browser
-> in Phase 5. Bis dahin läuft die Bereinigung über die Kommandozeile.
-> Der produktive Stand mit Oberfläche liegt weiterhin auf `main`.
+> (`main.py`, `ui_manager.py`) ist entfallen. Die Bedienung im Browser kommt in
+> Phase 5, der Hintergrundlauf mit Wiederaufnahme in Phase 3. Bis dahin läuft
+> alles über die Kommandozeile.
 
-### Schritt 1: Daten anreichern
+### Schritt 1: Anreichern und auswerten in einem Lauf
 
-Wird gerade umgebaut. Der bisherige Ablauf liegt im Branch `main`.
+Die Eingabedatei braucht die Spalten `SearchString`, `PLZ`, `KundenNr`
+(`Stadt` ist freiwillig).
 
-### Schritt 2: Daten bereinigen
+```bash
+python cli.py lauf Daten/DEINEDATEI.csv --quelle apify
+```
+
+Zum Üben oder Testen ohne Apify-Kosten: feste Antworten aus einer Datei
+verwenden. Das Format ist dasselbe wie bei einer angereicherten Datei.
+
+```bash
+python cli.py lauf Daten/DEINEDATEI.csv --antworten agent/testdaten/fixture_optimierte_daten.csv
+```
+
+Jeder Lauf wird in `laeufe.sqlite` festgehalten, mit jedem einzelnen Treffer,
+seinem Score und der Entscheidung darüber.
+
+### Schritt 2: Eine bereits angereicherte Datei auswerten
 
 1. Bereinigung starten:
 
     ```bash
-    python cli.py Daten/DEINEDATEI_optimierte_daten.csv
+    python cli.py bereinigen Daten/DEINEDATEI_optimierte_daten.csv
     ```
 
 2. Neben der Eingabedatei entsteht ein Ordner `DEINEDATEI_optimierte_daten_ergebnis`

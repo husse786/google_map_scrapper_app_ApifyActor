@@ -41,6 +41,42 @@ OUTPUT_FILES = {
 }
 
 
+def leere_ablage() -> dict:
+    """Vier leere Listen, eine je Ausgabedatei."""
+    return {schluessel: [] for schluessel in OUTPUT_FILES}
+
+
+def ausgabeordner_fuer(eingabe_pfad: str) -> str:
+    """
+    Der Ordner neben der Eingabedatei (02_DATENVERTRAG.md §2).
+
+    `InputData_Prod.csv` → `InputData_Prod_ergebnis/`
+    """
+    quelle = Path(eingabe_pfad)
+    return str(quelle.parent / f'{quelle.stem}_ergebnis')
+
+
+def schreibe_ausgabedateien(ablage: dict, ziel_ordner: str) -> dict:
+    """
+    Schreibt die vier Dateien in den Zielordner.
+
+    Immer alle vier, immer mit vollständiger Kopfzeile — auch wenn eine Liste
+    leer ist. Sonst scheitert jeder Folgeschritt am Einlesen.
+    """
+    ziel = Path(ziel_ordner)
+    ziel.mkdir(parents=True, exist_ok=True)
+
+    pfade = {}
+    for schluessel, dateiname in OUTPUT_FILES.items():
+        pfad = ziel / dateiname
+        out_df = pd.DataFrame(ablage.get(schluessel, []), columns=OUTPUT_COLUMNS).fillna('')
+        out_df.to_csv(pfad, sep=';', index=False, encoding='utf-8-sig')
+        pfade[schluessel] = str(pfad)
+        kunden = out_df['KundenNr'].nunique() if not out_df.empty else 0
+        logger.info(f'{schluessel}: {kunden} Kunden, {len(out_df)} Zeilen → {pfad}')
+    return pfade
+
+
 class DataCleaner:
     """Bereinigt und dedupliziert die angereicherten Google Maps Daten."""
 
@@ -469,46 +505,41 @@ class DataCleaner:
             raise ValueError("Die Spalte 'KundenNr' wurde nicht gefunden.")
 
         # Ergebnis-Listen für die drei Ausgabedateien plus Diagnose
-        fertig = []          # ① automatisch akzeptiert
-        pruefung = []        # ② Mensch entscheidet
-        nicht_moeglich = []  # ③ kein verwertbares Ergebnis
-        aussortiert = []     # Diagnose: verworfene Kandidaten
+        gesamt = leere_ablage()
 
         # Daten nach KundenNr gruppieren — jede Gruppe = 1 Kunde mit N Google-Ergebnissen
         grouped = df.groupby('KundenNr', sort=False)
         logger.info(f"Verarbeite {len(grouped)} Kundengruppen...")
 
         for kunden_nr, group in grouped:
-            self._process_customer(str(kunden_nr), group,
-                                   fertig, pruefung, nicht_moeglich, aussortiert)
+            for datei, zeilen in self.entscheide_kunde(kunden_nr, group).items():
+                gesamt[datei].extend(zeilen)
 
-        # ==================================================================
-        # ERGEBNISSE SPEICHERN
-        # ==================================================================
-        if output_dir:
-            target = Path(output_dir)
-        else:
-            quelle = Path(input_filepath)
-            target = quelle.parent / f"{quelle.stem}_ergebnis"
-        target.mkdir(parents=True, exist_ok=True)
-
-        results = {}
-        for key, data in [('fertig_fuer_erp', fertig),
-                          ('zur_pruefung', pruefung),
-                          ('nicht_moeglich', nicht_moeglich),
-                          ('aussortiert', aussortiert)]:
-            filepath = target / OUTPUT_FILES[key]
-            out_df = pd.DataFrame(data, columns=OUTPUT_COLUMNS).fillna('')
-            out_df.to_csv(filepath, sep=';', index=False, encoding='utf-8-sig')
-            results[key] = str(filepath)
-            kunden = out_df['KundenNr'].nunique() if not out_df.empty else 0
-            logger.info(f"{key}: {kunden} Kunden, {len(out_df)} Zeilen → {filepath}")
-
-        return results
+        ziel = output_dir or ausgabeordner_fuer(input_filepath)
+        return schreibe_ausgabedateien(gesamt, ziel)
 
     # ==========================================================================
     # Ein Kunde, eine Entscheidung
     # ==========================================================================
+
+    def entscheide_kunde(self, kunden_nr, group) -> dict:
+        """
+        Entscheidet für genau einen Kunden und liefert die Ausgabezeilen.
+
+        Der Einstieg für alles, was einzelne Kunden verarbeitet: die Bereinigung
+        einer ganzen Datei ebenso wie der Lauf über einen Provider. Damit trifft
+        beides dieselbe Entscheidung, nicht zwei ähnliche.
+
+        Returns:
+            {'fertig_fuer_erp': [...], 'zur_pruefung': [...],
+             'nicht_moeglich': [...], 'aussortiert': [...]}
+            Genau eine der ersten drei Listen ist gefüllt.
+        """
+        ablage = leere_ablage()
+        self._process_customer(str(kunden_nr), group,
+                               ablage['fertig_fuer_erp'], ablage['zur_pruefung'],
+                               ablage['nicht_moeglich'], ablage['aussortiert'])
+        return ablage
 
     def _process_customer(self, kunden_nr, group, fertig, pruefung,
                           nicht_moeglich, aussortiert):

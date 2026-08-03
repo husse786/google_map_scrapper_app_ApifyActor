@@ -28,3 +28,7 @@ Daten/
 # Environment variables - sensible Daten
 .env
 
+
+# SQLite-Datenbanken der Laeufe
+*.sqlite
+*.sqlite-journal
