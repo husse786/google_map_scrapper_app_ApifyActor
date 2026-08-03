@@ -91,6 +91,16 @@ def leere_ausgabezeile() -> dict:
     return {spalte: '' for spalte in CSV_FELDER.values()}
 
 
+def candidate_aus_zeile(zeile) -> Candidate:
+    """
+    Baut einen Candidate aus einer Zeile der Tabelle `kandidat`.
+
+    Gebraucht bei der Wiederaufnahme: die Treffer eines bereits verarbeiteten
+    Kunden stehen in der Datenbank und müssen nicht erneut geholt werden.
+    """
+    return Candidate(**{feld.name: zeile[feld.name] for feld in fields(Candidate)})
+
+
 class PlaceProvider(Protocol):
     """Was eine Datenquelle können muss (02_DATENVERTRAG.md §7)."""
 

@@ -11,6 +11,7 @@
 
 import copy
 import logging
+import threading
 
 from apify_client import ApifyClient
 from apify_client.errors import ApifyApiError
@@ -21,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 # 03_ENTSCHEIDUNGEN.md C: Timeout pro API-Aufruf.
 STANDARD_TIMEOUT_SEKUNDEN = 90
+
+# Sekunden, die von der Frist abgezogen werden, damit dieser Provider vor dem
+# Notschalter im Lauf zum Zug kommt. Der Lauf schneidet jeden Aufruf nach
+# STANDARD_TIMEOUT_SEKUNDEN ab, egal welcher Provider dahintersteht. Ohne
+# diesen Vorsprung wäre der Provider immer der Zweite: er käme nie dazu, den
+# überzogenen Apify-Lauf abzubrechen, und der liefe auf Kosten des Kontingents
+# weiter. Beobachtet am 03.08.2026 bei einem Lauf, der 91 Sekunden brauchte.
+RESERVE_SEKUNDEN = 5
 
 # Die Einstellungen des Actors. Sie standen bisher in config.py und wichen dort
 # von config.template.py ab (Umbauplan §9). Hier sind die Werte, mit denen die
@@ -73,6 +82,14 @@ class ApifyProvider:
         self.actor_id = actor_id
         self.actor_input = actor_input if actor_input is not None else STANDARD_ACTOR_INPUT
         self.timeout_sekunden = timeout_sekunden
+        # Die Frist, die Apify tatsächlich bekommt: etwas kürzer als die des
+        # Laufs, damit dieser Provider selbst entscheidet und aufräumt.
+        self.wartezeit = max(5, int(timeout_sekunden) - RESERVE_SEKUNDEN)
+        # Läufe, die gerade bei Apify rechnen. Der Abbruch-Knopf muss sie
+        # erreichen, sonst laufen sie auf Kosten des Kontingents weiter.
+        self._laufende = set()
+        self._sperre = threading.Lock()
+        self._abgebrochen = False
         try:
             self.client = ApifyClient(api_token)
             self.actor = self.client.actor(actor_id)
@@ -96,41 +113,55 @@ class ApifyProvider:
         if not self.actor:
             logger.error('Apify-Client ist nicht einsatzbereit, Aufruf übersprungen.')
             return []
+        if self._abgebrochen:
+            return []
 
         run_input = copy.deepcopy(self.actor_input)
         run_input['searchStringsArray'] = [search_string]
         run_input['postalCode'] = str(plz)
 
+        # Erst starten, dann warten — nicht in einem Rutsch. Nur so ist die
+        # Lauf-Nummer bekannt, solange der Lauf noch rechnet, und nur so kann
+        # der Abbruch-Knopf ihn erreichen.
+        lauf_id = None
         try:
-            lauf = self.actor.call(
-                run_input=run_input,
-                timeout_secs=self.timeout_sekunden,
-                wait_secs=self.timeout_sekunden,
-                logger=None,
-            )
+            lauf = self.actor.start(run_input=run_input,
+                                    timeout_secs=self.wartezeit)
+            lauf_id = lauf.get('id') if lauf else None
+            if not lauf_id:
+                logger.error(f'Apify lieferte keine Lauf-Nummer für "{search_string}".')
+                return []
+
+            with self._sperre:
+                if self._abgebrochen:
+                    self.client.run(lauf_id).abort()
+                    return []
+                self._laufende.add(lauf_id)
+
+            fertig = self.client.run(lauf_id).wait_for_finish(wait_secs=self.wartezeit)
         except ApifyApiError as fehler:
             logger.error(f'Apify meldet einen Fehler für "{search_string}": {fehler}')
             return []
         except Exception as fehler:
             logger.error(f'Unerwarteter Fehler bei "{search_string}": {fehler}')
             return []
+        finally:
+            with self._sperre:
+                self._laufende.discard(lauf_id)
 
-        if not lauf:
-            logger.error(f'Apify lieferte keinen Lauf für "{search_string}".')
-            return []
-
-        status = lauf.get('status')
+        status = (fertig or {}).get('status')
         if status != 'SUCCEEDED':
-            # Häufigster Fall: nach wait_secs läuft der Actor noch. Abbrechen,
+            # Häufigster Fall: nach wait_secs rechnet der Actor noch. Abbrechen,
             # sonst verbraucht er weiter Kontingent, obwohl niemand wartet.
             logger.warning(f'Apify-Lauf für "{search_string}" endete mit Status '
                            f'{status} statt SUCCEEDED, wird als leeres Ergebnis '
                            f'behandelt.')
-            self._lauf_abbrechen(lauf)
+            self._lauf_abbrechen(lauf_id)
             return []
 
         try:
-            rohdaten = list(self.client.dataset(lauf['defaultDatasetId']).iterate_items())
+            rohdaten = list(
+                self.client.dataset(fertig['defaultDatasetId']).iterate_items())
         except Exception as fehler:
             logger.error(f'Ergebnisse von Apify nicht lesbar für "{search_string}": {fehler}')
             return []
@@ -156,8 +187,24 @@ class ApifyProvider:
         werte = {ziel: rohdaten.get(quelle) for quelle, ziel in FELD_ZUORDNUNG.items()}
         return Candidate(**werte)
 
-    def _lauf_abbrechen(self, lauf: dict) -> None:
-        lauf_id = lauf.get('id')
+    def abbrechen(self) -> int:
+        """
+        Beendet alle Läufe, die gerade bei Apify rechnen.
+
+        Wird vom Abbruch-Knopf gerufen. Ohne das rechnet Apify weiter und
+        stellt in Rechnung, was niemand mehr abholt. Weitere Aufrufe dieses
+        Providers liefern sofort nichts mehr zurück.
+        """
+        with self._sperre:
+            self._abgebrochen = True
+            offene = list(self._laufende)
+            self._laufende.clear()
+
+        for lauf_id in offene:
+            self._lauf_abbrechen(lauf_id)
+        return len(offene)
+
+    def _lauf_abbrechen(self, lauf_id: str) -> None:
         if not lauf_id:
             return
         try:

@@ -175,6 +175,9 @@ def test_timeout_standard_ist_90_sekunden():
     assert STANDARD_TIMEOUT_SEKUNDEN == 90
     assert Lauf(None, None).timeout_sekunden == 90
     assert ApifyProvider('x', 'y').timeout_sekunden == 90
+    # Apify bekommt etwas weniger, damit der Provider vor dem Notschalter im
+    # Lauf entscheidet und den überzogenen Lauf noch abbrechen kann.
+    assert ApifyProvider('x', 'y').wartezeit == 85
 
 
 def test_haengender_provider_endet_in_datei_drei(tmp_path):
@@ -298,10 +301,10 @@ def test_fortschritt_wird_nach_jedem_kunden_geschrieben(tmp_path):
 
         staende = []
 
-        def _einen_kunden(self, job_id, kunden_nr, stamm, gesamt):
+        def _einen_kunden(self, job_id, kunden_nr, stamm, kandidaten):
             self.staende.append(
                 self.datenbank.fortschritt_lesen(job_id)['kunden_erledigt'])
-            super()._einen_kunden(job_id, kunden_nr, stamm, gesamt)
+            return super()._einen_kunden(job_id, kunden_nr, stamm, kandidaten)
 
     with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
         lauf = BeobachteterLauf(FakeProvider.aus_csv(str(FIXTURE)), datenbank)
@@ -501,17 +504,22 @@ def test_apify_ohne_erfolgreichen_lauf_liefert_nichts_und_bricht_ab():
     abgebrochen = []
 
     class LaufStub:
+        def wait_for_finish(self, wait_secs=None):
+            # 90 minus die Reserve, damit der Provider vor dem Lauf entscheidet
+            assert wait_secs == 85
+            return {'id': 'LAUF_1', 'status': 'RUNNING'}
+
         def abort(self):
             abgebrochen.append(True)
 
     class ActorStub:
-        def call(self, **kwargs):
-            assert kwargs['timeout_secs'] == 90
-            assert kwargs['wait_secs'] == 90
+        def start(self, **kwargs):
+            assert kwargs['timeout_secs'] == 85
             return {'id': 'LAUF_1', 'status': 'RUNNING'}
 
     class ClientStub:
         def run(self, lauf_id):
+            assert lauf_id == 'LAUF_1'
             return LaufStub()
 
     provider = ApifyProvider('token', 'actor')

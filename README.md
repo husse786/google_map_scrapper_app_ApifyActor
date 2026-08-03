@@ -27,6 +27,7 @@ google-maps-scraper-app/
 │
 ├── cli.py                \# Kommandozeile: Lauf und Bereinigung
 │
+├── worker.py             \# Der Lauf im Hintergrund: starten, abbrechen, fortsetzen
 ├── pipeline.py           \# Ein Lauf: Eingabe → Provider → Datenbank → drei Dateien
 ├── place\_provider.py     \# Candidate und die Provider-Schnittstelle
 ├── apify\_provider.py     \# Datenquelle Apify — kennt als einziges Modul deren Felder
@@ -123,8 +124,22 @@ verwenden. Das Format ist dasselbe wie bei einer angereicherten Datei.
 python cli.py lauf Daten/DEINEDATEI.csv --antworten agent/testdaten/fixture_optimierte_daten.csv
 ```
 
-Jeder Lauf wird in `laeufe.sqlite` festgehalten, mit jedem einzelnen Treffer,
+Sechs Abfragen laufen gleichzeitig. Der Fortschritt wird nach jedem Kunden
+gespeichert; jeder Lauf steht in `laeufe.sqlite`, mit jedem einzelnen Treffer,
 seinem Score und der Entscheidung darüber.
+
+**Abbrechen:** Strg+C. Der Lauf hält innerhalb von Sekunden an, die bereits
+verarbeiteten Kunden bleiben gespeichert.
+
+**Nach einem Absturz weitermachen** — Stromausfall, Neustart, zugeklapptes
+Notebook. Es wird kein Kunde doppelt abgefragt:
+
+```bash
+python cli.py fortsetzen Daten/DEINEDATEI.csv --quelle apify
+```
+
+Solange ein Lauf unerledigt ist, weist ein zweiter Start ihn mit einem Hinweis
+ab. Es läuft immer nur ein Auftrag.
 
 ### Schritt 2: Eine bereits angereicherte Datei auswerten
 

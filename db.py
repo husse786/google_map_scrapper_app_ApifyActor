@@ -79,9 +79,15 @@ class Datenbank:
         self.pfad = str(pfad)
         if self.pfad != ':memory:':
             Path(self.pfad).parent.mkdir(parents=True, exist_ok=True)
-        self.verbindung = sqlite3.connect(self.pfad)
+        self.verbindung = sqlite3.connect(self.pfad, timeout=10)
         self.verbindung.row_factory = sqlite3.Row
         self.verbindung.execute('PRAGMA foreign_keys = ON')
+        if self.pfad != ':memory:':
+            # Der Worker schreibt aus seinem Thread, die Statusanzeige liest aus
+            # einem anderen. WAL erlaubt beides gleichzeitig, ohne dass eine
+            # Seite blockiert.
+            self.verbindung.execute('PRAGMA journal_mode = WAL')
+            self.verbindung.execute('PRAGMA busy_timeout = 10000')
         self.verbindung.executescript(SCHEMA)
         self.verbindung.commit()
 
@@ -135,6 +141,19 @@ class Datenbank:
             'SELECT * FROM job WHERE id = ?', (job_id,)).fetchone()
         return dict(zeile) if zeile else None
 
+    def offener_job(self) -> dict:
+        """
+        Der Job im Zustand LAEUFT, falls es einen gibt.
+
+        Zwei Verwendungen: der zweite Start wird damit abgewiesen, und nach
+        einem Absturz findet der Start so den Lauf, der fortzusetzen ist
+        (02_DATENVERTRAG.md §6).
+        """
+        zeile = self.verbindung.execute(
+            "SELECT * FROM job WHERE status = 'LAEUFT' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return dict(zeile) if zeile else None
+
     # ------------------------------------------------------------------
     # Fortschritt
     # ------------------------------------------------------------------
@@ -143,6 +162,12 @@ class Datenbank:
         """Wird nach jedem Kunden aufgerufen (02_DATENVERTRAG.md §6)."""
         self.verbindung.execute(
             'UPDATE job SET kunden_erledigt = ? WHERE id = ?', (kunden_erledigt, job_id))
+        self.verbindung.commit()
+
+    def kunden_total_setzen(self, job_id: int, kunden_total: int) -> None:
+        """Die Gesamtzahl steht erst fest, wenn die Eingabedatei gelesen ist."""
+        self.verbindung.execute(
+            'UPDATE job SET kunden_total = ? WHERE id = ?', (kunden_total, job_id))
         self.verbindung.commit()
 
     def fortschritt_lesen(self, job_id: int) -> dict:
@@ -163,6 +188,13 @@ class Datenbank:
         Legt einen Kunden an. Ein zweiter Kunde mit derselben Nummer im selben
         Job wird von `idx_kunde_nr` abgewiesen (sqlite3.IntegrityError).
         """
+        kunde_id = self._kunde_einfuegen(job_id, kunden_nr, search_string, plz, stadt,
+                                         place_id, lat, lng, ergebnis, qualitaet, grund)
+        self.verbindung.commit()
+        return kunde_id
+
+    def _kunde_einfuegen(self, job_id, kunden_nr, search_string, plz, stadt,
+                         place_id, lat, lng, ergebnis, qualitaet, grund) -> int:
         if ergebnis is not None and ergebnis not in ERGEBNISSE:
             raise ValueError(f'Unbekanntes Ergebnis "{ergebnis}".')
         cursor = self.verbindung.execute(
@@ -171,8 +203,33 @@ class Datenbank:
             'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (job_id, str(kunden_nr), search_string, plz, stadt, place_id, lat, lng,
              ergebnis, qualitaet, grund, _jetzt()))
-        self.verbindung.commit()
         return cursor.lastrowid
+
+    def kunde_mit_kandidaten_schreiben(self, job_id: int, kunden_nr: str,
+                                       eintraege: list, search_string: str = '',
+                                       plz: str = '', stadt: str = '',
+                                       place_id: str = '', lat: str = '', lng: str = '',
+                                       ergebnis: str = None, qualitaet: str = None,
+                                       grund: str = None) -> int:
+        """
+        Schreibt Kunde und Kandidaten in einer Transaktion.
+
+        Wichtig für die Wiederaufnahme: nach einem Absturz ist ein Kunde
+        entweder vollständig in der Datenbank oder gar nicht. Ein Kunde mit
+        Eintrag, aber ohne seine Kandidaten würde beim Fortsetzen als
+        "kein Ergebnis" neu entschieden — und damit falsch.
+        """
+        try:
+            kunde_id = self._kunde_einfuegen(job_id, kunden_nr, search_string, plz,
+                                             stadt, place_id, lat, lng, ergebnis,
+                                             qualitaet, grund)
+            if eintraege:
+                self._kandidaten_einfuegen(kunde_id, eintraege)
+        except Exception:
+            self.verbindung.rollback()
+            raise
+        self.verbindung.commit()
+        return kunde_id
 
     def kunden_lesen(self, job_id: int) -> list:
         return [dict(z) for z in self.verbindung.execute(
@@ -190,6 +247,11 @@ class Datenbank:
         Jeder Kandidat wird gespeichert, auch der abgelehnte — das ist der
         Grund, warum es die Tabelle überhaupt gibt.
         """
+        anzahl = self._kandidaten_einfuegen(kunde_id, eintraege)
+        self.verbindung.commit()
+        return anzahl
+
+    def _kandidaten_einfuegen(self, kunde_id: int, eintraege: list) -> int:
         zeilen = []
         for kandidat, score, entscheid, grund in eintraege:
             if not isinstance(kandidat, Candidate):
@@ -209,7 +271,6 @@ class Datenbank:
             'opening_hours, permanently_closed, temporarily_closed, score, '
             'entscheid, grund) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '
             '?, ?, ?, ?)', zeilen)
-        self.verbindung.commit()
         return len(zeilen)
 
     def kandidaten_lesen(self, kunde_id: int) -> list:

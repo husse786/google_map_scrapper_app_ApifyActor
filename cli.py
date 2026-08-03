@@ -11,20 +11,27 @@
 #   python cli.py lauf <eingabe.csv> --quelle apify
 #       dasselbe über Apify. Kostet Kontingent.
 #
+#   python cli.py fortsetzen <eingabe.csv> --quelle apify
+#       nimmt einen Lauf wieder auf, der abgestürzt ist
+#
+# Der Lauf arbeitet im Hintergrund. Strg+C bricht ihn ab, ohne die bisher
+# verarbeiteten Kunden zu verlieren — sie stehen in der Datenbank.
+#
 # Alle Meldungen sind deutsch. Technische Details stehen im Protokoll unter
 # logs/bereinigung.log, nicht auf dem Bildschirm.
 
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 import pandas as pd
 
 from data_cleaner import DataCleaner
-from db import Datenbank
 from fake_provider import FakeProvider
-from pipeline import STANDARD_TIMEOUT_SEKUNDEN, Lauf
+from pipeline import STANDARD_ARBEITER, STANDARD_TIMEOUT_SEKUNDEN
+from worker import LaeuftBereits, Worker, offener_lauf
 
 LOG_DIR = Path(__file__).resolve().parent / 'logs'
 STANDARD_DATENBANK = Path(__file__).resolve().parent / 'laeufe.sqlite'
@@ -141,6 +148,14 @@ def bereinigen(args) -> int:
 # ==========================================================================
 
 def lauf(args) -> int:
+    return _lauf_oder_fortsetzen(args, fortsetzen=False)
+
+
+def fortsetzen(args) -> int:
+    return _lauf_oder_fortsetzen(args, fortsetzen=True)
+
+
+def _lauf_oder_fortsetzen(args, fortsetzen: bool) -> int:
     eingabe: Path = args.eingabe
     df = _eingabe_pruefen(eingabe, ('SearchString', 'PLZ', 'KundenNr'))
     if df is None:
@@ -152,32 +167,79 @@ def lauf(args) -> int:
         print(str(fehler))
         return 1
 
-    kunden_eingabe = df['KundenNr'].nunique()
-    print(f'Datei:  {eingabe.name}')
-    print(f'Kunden: {_zahl(kunden_eingabe)} ({_zahl(len(df))} Zeilen)')
-    print(f'Quelle: {"Apify" if args.quelle == "apify" else "feste Antworten"}')
-    print('Lauf läuft ...')
+    worker = Worker(provider, args.datenbank, timeout_sekunden=args.timeout,
+                    arbeiter=args.arbeiter)
 
-    datenbank = Datenbank(args.datenbank)
+    if fortsetzen:
+        offen = offener_lauf(args.datenbank)
+        if not offen:
+            print('Es gibt keinen unterbrochenen Auftrag zum Fortsetzen.')
+            return 1
+        if offen['dateiname'] != eingabe.name:
+            print(f'Der unterbrochene Auftrag gehört zur Datei '
+                  f'"{offen["dateiname"]}", angegeben wurde "{eingabe.name}".')
+            return 1
+        print(f'Auftrag Nummer {offen["id"]} wird fortgesetzt '
+              f'({_zahl(offen["kunden_erledigt"])} Kunden lagen schon vor).')
+        job_id = worker.fortsetzen(offen['id'], eingabe,
+                                   str(args.ausgabe) if args.ausgabe else None)
+    else:
+        kunden_eingabe = df['KundenNr'].nunique()
+        print(f'Datei:  {eingabe.name}')
+        print(f'Kunden: {_zahl(kunden_eingabe)} ({_zahl(len(df))} Zeilen)')
+        print(f'Quelle: {"Apify" if args.quelle == "apify" else "feste Antworten"}')
+        print(f'Es arbeiten {args.arbeiter} Abfragen gleichzeitig. '
+              f'Abbrechen mit Strg+C.')
+        try:
+            job_id = worker.starten(eingabe,
+                                    str(args.ausgabe) if args.ausgabe else None,
+                                    email=args.email)
+        except LaeuftBereits as hinweis:
+            print(str(hinweis))
+            return 1
+
+    return _auf_lauf_warten(worker, job_id, args)
+
+
+def _auf_lauf_warten(worker: Worker, job_id: int, args) -> int:
+    """Zeigt den Fortschritt, bis der Lauf fertig ist. Strg+C bricht ab."""
+    letzter_stand = -1
     try:
-        ergebnis = Lauf(provider, datenbank,
-                        timeout_sekunden=args.timeout).ausfuehren(
-            eingabe, str(args.ausgabe) if args.ausgabe else None)
-    except Exception:
-        logging.getLogger(__name__).exception('Lauf abgebrochen')
+        while not worker.warten(timeout=1.0):
+            stand = worker.fortschritt() or {}
+            erledigt = stand.get('kunden_erledigt', 0)
+            if erledigt != letzter_stand:
+                gesamt = stand.get('kunden_total', 0)
+                print(f'  {_zahl(erledigt)} von {_zahl(gesamt)} Kunden ...')
+                letzter_stand = erledigt
+    except KeyboardInterrupt:
+        print()
+        print('Abbruch angefordert, der Lauf wird gestoppt ...')
+        worker.abbrechen()
+        worker.warten(timeout=10)
+
+    if worker.fehler:
+        logging.getLogger(__name__).error('Lauf gescheitert', exc_info=worker.fehler)
         print()
         print('Der Lauf konnte nicht abgeschlossen werden.')
         print(f'Was genau passiert ist, steht im Protokoll: {LOG_DIR / "bereinigung.log"}')
         return 1
-    finally:
-        datenbank.schliessen()
 
-    if ergebnis['doppelte_kundennummern']:
+    ergebnis = worker.ergebnis or {}
+    if ergebnis.get('status') == 'ABGEBROCHEN':
+        print()
+        print(f'Abgebrochen nach {_zahl(ergebnis["kunden_erledigt"])} von '
+              f'{_zahl(ergebnis["kunden_total"])} Kunden.')
+        print('Die bereits verarbeiteten Kunden sind gespeichert. Fortsetzen mit:')
+        print(f'  python cli.py fortsetzen {args.eingabe}')
+        return 1
+
+    if ergebnis.get('doppelte_kundennummern'):
         print(f'Hinweis: {_zahl(ergebnis["doppelte_kundennummern"])} Zeilen hatten '
               f'eine Kundennummer, die schon vorkam. Es zählt die erste Zeile.')
 
     code = _ergebnis_zeigen(ergebnis['dateien'], ergebnis['kunden_total'])
-    print(f'Lauf Nummer {ergebnis["job_id"]} in der Datenbank: {args.datenbank}')
+    print(f'Lauf Nummer {job_id} in der Datenbank: {args.datenbank}')
     return code
 
 
@@ -214,17 +276,31 @@ def main(argv=None) -> int:
                            help='eine bereits angereicherte Datei auswerten')
     b.set_defaults(funktion=bereinigen)
 
-    l = befehle.add_parser('lauf', parents=[gemeinsam],
+    lauf_optionen = argparse.ArgumentParser(add_help=False)
+    lauf_optionen.add_argument('--quelle', choices=('fake', 'apify'), default='fake',
+                               help='woher die Treffer kommen '
+                                    '(Standard: feste Antworten)')
+    lauf_optionen.add_argument('--antworten', type=Path, default=None,
+                               help='Antwortdatei für --quelle fake')
+    lauf_optionen.add_argument('--datenbank', type=Path, default=STANDARD_DATENBANK,
+                               help=f'SQLite-Datei (Standard: {STANDARD_DATENBANK.name})')
+    lauf_optionen.add_argument('--timeout', type=int,
+                               default=STANDARD_TIMEOUT_SEKUNDEN,
+                               help=f'Sekunden pro Abfrage '
+                                    f'(Standard: {STANDARD_TIMEOUT_SEKUNDEN})')
+    lauf_optionen.add_argument('--arbeiter', type=int, default=STANDARD_ARBEITER,
+                               help=f'gleichzeitige Abfragen '
+                                    f'(Standard: {STANDARD_ARBEITER})')
+    lauf_optionen.add_argument('--email', default=None,
+                               help='Adresse für die Benachrichtigung (Phase 7)')
+
+    l = befehle.add_parser('lauf', parents=[gemeinsam, lauf_optionen],
                            help='anreichern und auswerten')
-    l.add_argument('--quelle', choices=('fake', 'apify'), default='fake',
-                   help='woher die Treffer kommen (Standard: feste Antworten)')
-    l.add_argument('--antworten', type=Path, default=None,
-                   help='Antwortdatei für --quelle fake')
-    l.add_argument('--datenbank', type=Path, default=STANDARD_DATENBANK,
-                   help=f'SQLite-Datei (Standard: {STANDARD_DATENBANK.name})')
-    l.add_argument('--timeout', type=int, default=STANDARD_TIMEOUT_SEKUNDEN,
-                   help=f'Sekunden pro Abfrage (Standard: {STANDARD_TIMEOUT_SEKUNDEN})')
     l.set_defaults(funktion=lauf)
+
+    f = befehle.add_parser('fortsetzen', parents=[gemeinsam, lauf_optionen],
+                           help='einen unterbrochenen Lauf wieder aufnehmen')
+    f.set_defaults(funktion=fortsetzen)
 
     args = parser.parse_args(argv)
     _setup_logging(args.protokoll_anzeigen)
