@@ -48,6 +48,11 @@ Genau drei, in beiden Modi identisch benannt:
 | `zur_pruefung.csv` | unklar, Mensch entscheidet |
 | `nicht_moeglich.csv` | kein verwertbares Ergebnis |
 
+**Ablageort.** Die drei Dateien tragen feste Namen und würden sich bei mehreren
+Läufen überschreiben. Sie werden deshalb in einen Ordner neben der Eingabedatei
+geschrieben: `<eingabedateiname>_ergebnis/`. Beispiel:
+`InputData_Prod.csv` → `InputData_Prod_ergebnis/fertig_fuer_erp.csv`.
+
 **Invariante:** Jede `KundenNr` aus der Eingabe erscheint in **genau einer**
 dieser Dateien. Nie in zweien, nie in keiner.
 
