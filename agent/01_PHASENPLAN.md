@@ -235,6 +235,39 @@ Kein Scoring in diesem Pfad. Ein Kunde, eine ID, ein Ergebnis.
 
 ---
 
+## Phase 8 — Prüfmaske im Browser
+
+**Ziel:** Die 700–840 Prüffälle je Batch werden im Browser entschieden, nicht
+in Excel.
+
+Entstanden aus der Messung in Phase 4: Die Prüffälle sind kein Eingabefehler,
+sondern die Grenze des Abgleichs — 58–64% „andere Strasse", 19–22% „gleiche
+Strasse, andere Hausnummer". Sie lassen sich nicht wegvalidieren.
+
+### Umfang
+
+- Liste der Prüffälle eines Jobs, ein Fall pro Zeile, mit Grund
+- Detailansicht: Kundendaten links, Google-Kandidaten rechts, je mit `score`
+  und `grund` aus der Tabelle `kandidat`
+- Ein Klick je Entscheidung: Kandidat wählen, oder „keiner passt" → ③
+- Fortschritt sichtbar, Arbeit jederzeit unterbrechbar
+- Entschiedene Fälle fliessen in `fertig_fuer_erp.csv` — **ein** ERP-Import
+  statt zwei
+
+Die Datengrundlage steht seit Phase 2 vollständig in der Datenbank. Diese Phase
+ist Oberfläche, keine Migration.
+
+### Abnahmekriterien
+
+- [ ] Alle Prüffälle eines Jobs sind aufrufbar und einzeln entscheidbar
+- [ ] Eine Entscheidung ist nach dem Neuladen der Seite noch da
+- [ ] Entschiedene Fälle stehen in `fertig_fuer_erp.csv`, nicht mehr in `zur_pruefung.csv`
+- [ ] Die Invariante aus `02_DATENVERTRAG.md` §2 gilt auch nach Entscheidungen
+- [ ] Eine unentschiedene Restmenge bleibt korrekt in ②
+- [ ] Bedienbar mit Tastatur; 50 Fälle hintereinander ohne Mausgriff entscheidbar
+
+---
+
 ## Übersicht
 
 | Phase | Ergebnis | Von Apify abhängig |
@@ -246,5 +279,6 @@ Kein Scoring in diesem Pfad. Ein Kunde, eine ID, ein Ergebnis.
 | 5 | Weboberfläche | nein (`FakeProvider`) |
 | 6 | Modus B | Google-Key nötig |
 | 7 | Mail und Härtung | SMTP nötig |
+| 8 | Prüfmaske im Browser | nein |
 
 Phasen 1 bis 5 laufen ohne externe Freigaben und ohne Apify-Kosten durch.

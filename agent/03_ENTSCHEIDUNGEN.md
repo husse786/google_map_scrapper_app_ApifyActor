@@ -118,8 +118,15 @@ und Eingangs-versus-Gebäudemitte.
 
 ## D — Upload-Validierung (Phase 4)
 
-Diese drei Prüfungen sind Pflicht. Alle **warnen**, keine blockiert den Start.
-Der Nutzer entscheidet, ob er trotzdem läuft.
+Diese drei Prüfungen sind Pflicht.
+
+**Fehlende Pflichtspalte blockiert den Start.** (Geändert nach Phase 4.) Ohne
+`SearchString`, `PLZ` oder `KundenNr` kann der Lauf nicht arbeiten — er würde
+sofort abbrechen. Eine Warnung, die der Nutzer wegklicken kann, führt hier nur
+in eine Sackgasse.
+
+Die anderen beiden Prüfungen **warnen**, blockieren nicht. Der Nutzer
+entscheidet, ob er trotzdem läuft.
 
 | Prüfung | Auslöser | Meldung nennt |
 |---|---|---|
@@ -127,9 +134,25 @@ Der Nutzer entscheidet, ob er trotzdem läuft.
 | Kostenstelle statt Strasse | Strassenteil ohne Buchstabenfolge ≥ 4, oder beginnt mit `KST`/`KOST` | Anzahl + Beispielzeile im Original |
 | Titel ist nur Kategorie | Titel besteht ausschliesslich aus Wörtern der `GENERIC_FIRST_WORDS`-Liste | Anzahl + Beispielzeile |
 
-Das ist der wirkungsvollste Punkt im ganzen Projekt: von 5'188 Prüfzeilen der
-Batches 1–4 waren 4'288 „keine Strassentreffer", verursacht durch Werte wie
-`KST 715611 0` im Strassenfeld.
+**Diese Einschätzung war falsch und ist durch Messung widerlegt.** (Phase 4.)
+
+Ursprünglich stand hier, das sei der wirkungsvollste Punkt im Projekt — 4'288
+von 5'188 Prüfzeilen seien Kostenstellen. Die Messung an zwei realen Batches
+ergab **14 und 11 betroffene Zeilen**, von denen je eine als „keine
+Strassentreffer" endete.
+
+Zwei Gründe: der ERP-Export ist besser geworden (3.9% → 1.6%), und die
+bestehende Vorverarbeitung entfernt von dem Rest nochmals zwei Drittel.
+
+Die Prüfungen bleiben — sie kosten nichts und schaden nicht. Sie sind aber
+**kein Hebel**. Die Prüffälle entstehen zu 58–64% durch „andere Strasse" und zu
+19–22% durch „gleiche Strasse, andere Hausnummer". Das ist die Grenze des
+Abgleichs, kein Eingabefehler, und vor dem Lauf nicht erkennbar.
+
+**Die Liste der Kategoriewörter** (77 Einträge, mehrsprachig) ist geprüft und
+freigegeben. Sie löst nur aus, wenn der Titel ausschliesslich aus
+Kategoriewörtern besteht — „Bar Rouge" und „Cafe Federal" lösen nicht aus.
+Änderungen an der Liste nur über einen Korrekturplan.
 
 ---
 
@@ -142,8 +165,9 @@ Nicht bauen, auch nicht „vorbereitend", auch nicht als Schnittstelle:
 - WebSockets — Statusseite pollt alle 5 Sekunden
 - React, Vue, npm, Build-Pipeline
 - Docker (kommt frühestens beim Serverumzug)
-- **Prüfmaske im Browser** — zurückgestellt, bis nach Phase 4 messbar ist,
-  wie viele Prüffälle überhaupt übrig bleiben. Das Datenmodell hält sie offen,
-  mehr nicht.
+- ~~Prüfmaske im Browser~~ — **wird gebaut.** Die Messung aus Phase 4 hat
+  entschieden: nach der Validierung bleiben 713 und 840 Prüffälle je Batch,
+  also 28% und 33% aller Kunden. Über fünf Batches sind das mehrere tausend
+  Fälle. Das ist in Excel nicht handhabbar. Als **Phase 8** aufgenommen.
 - Automatische Wiederholung fehlgeschlagener Aufrufe
 - Mehrsprachigkeit
