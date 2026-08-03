@@ -168,16 +168,17 @@ def test_jeder_kunde_genau_einmal(tmp_path):
 # Kriterium: Timeout nachweisbar
 # ============================================================================
 
-def test_timeout_standard_ist_90_sekunden():
+def test_timeout_standard_ist_180_sekunden():
     """03_ENTSCHEIDUNGEN.md C. Beide Ebenen tragen denselben Wert."""
     import pipeline
-    assert pipeline.STANDARD_TIMEOUT_SEKUNDEN == 90
-    assert STANDARD_TIMEOUT_SEKUNDEN == 90
-    assert Lauf(None, None).timeout_sekunden == 90
-    assert ApifyProvider('x', 'y').timeout_sekunden == 90
-    # Apify bekommt etwas weniger, damit der Provider vor dem Notschalter im
-    # Lauf entscheidet und den überzogenen Lauf noch abbrechen kann.
-    assert ApifyProvider('x', 'y').wartezeit == 85
+    assert pipeline.STANDARD_TIMEOUT_SEKUNDEN == 180
+    assert STANDARD_TIMEOUT_SEKUNDEN == 180
+    assert Lauf(None, None).timeout_sekunden == 180
+    assert ApifyProvider('x', 'y').timeout_sekunden == 180
+    # Apify bekommt fünf Sekunden weniger, damit der Provider vor dem
+    # Notschalter im Lauf entscheidet und den überzogenen Lauf noch
+    # abbrechen kann.
+    assert ApifyProvider('x', 'y').wartezeit == 175
 
 
 def test_haengender_provider_endet_in_datei_drei(tmp_path):
@@ -185,7 +186,7 @@ def test_haengender_provider_endet_in_datei_drei(tmp_path):
     Ein Provider, der nicht antwortet, darf den Lauf nicht blockieren. Der Kunde
     landet in ③, ohne Retry. Hier mit einem Bruchteil einer Sekunde statt
     neunzig, damit die Testsuite schnell bleibt; der Lauf mit den echten
-    90 Sekunden steht in test_timeout_mit_echten_90_sekunden.
+    180 Sekunden steht in test_timeout_mit_echten_180_sekunden.
     """
     provider = SchlafenderProvider(sekunden=5)
     ziel = tmp_path / 'ergebnis'
@@ -209,8 +210,8 @@ def test_haengender_provider_endet_in_datei_drei(tmp_path):
 
 
 @pytest.mark.skipif(not os.environ.get('LANGSAME_TESTS'),
-                    reason='Dauert 90 Sekunden. Mit LANGSAME_TESTS=1 ausführen.')
-def test_timeout_mit_echten_90_sekunden(tmp_path):
+                    reason='Dauert 180 Sekunden. Mit LANGSAME_TESTS=1 ausführen.')
+def test_timeout_mit_echten_180_sekunden(tmp_path):
     """Derselbe Nachweis mit dem echten Wert aus 03_ENTSCHEIDUNGEN.md C."""
     quelle = tmp_path / 'eingabe.csv'
     pd.DataFrame([{'SearchString': 'Muster Laden, Hauptstrasse 1, 5620 Musterdorf',
@@ -220,13 +221,16 @@ def test_timeout_mit_echten_90_sekunden(tmp_path):
     ziel = tmp_path / 'ergebnis'
     beginn = time.monotonic()
     with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
-        Lauf(SchlafenderProvider(sekunden=600), datenbank).ausfuehren(quelle, str(ziel))
+        # Nur wenig länger als die Frist. Der Lauf gibt den Aufruf zwar sofort
+        # auf, aber Python wartet beim Beenden des Prozesses auf den Thread —
+        # bei 600 Sekunden hinge die Testsuite danach zehn Minuten.
+        Lauf(SchlafenderProvider(sekunden=200), datenbank).ausfuehren(quelle, str(ziel))
     gebraucht = time.monotonic() - beginn
 
     nicht_moeglich = lies(ziel / OUTPUT_FILES['nicht_moeglich'])
     assert len(nicht_moeglich) == 1
     assert nicht_moeglich.iloc[0]['qualitaet'] == 'NICHT_MOEGLICH (kein Ergebnis)'
-    assert 88 <= gebraucht <= 100, f'nach {gebraucht:.1f} s beendet, erwartet ~90 s'
+    assert 178 <= gebraucht <= 195, f'nach {gebraucht:.1f} s beendet, erwartet ~180 s'
 
 
 # ============================================================================
@@ -505,8 +509,8 @@ def test_apify_ohne_erfolgreichen_lauf_liefert_nichts_und_bricht_ab():
 
     class LaufStub:
         def wait_for_finish(self, wait_secs=None):
-            # 90 minus die Reserve, damit der Provider vor dem Lauf entscheidet
-            assert wait_secs == 85
+            # 180 minus die Reserve, damit der Provider vor dem Lauf entscheidet
+            assert wait_secs == 175
             return {'id': 'LAUF_1', 'status': 'RUNNING'}
 
         def abort(self):
@@ -514,7 +518,7 @@ def test_apify_ohne_erfolgreichen_lauf_liefert_nichts_und_bricht_ab():
 
     class ActorStub:
         def start(self, **kwargs):
-            assert kwargs['timeout_secs'] == 85
+            assert kwargs['timeout_secs'] == 175
             return {'id': 'LAUF_1', 'status': 'RUNNING'}
 
     class ClientStub:

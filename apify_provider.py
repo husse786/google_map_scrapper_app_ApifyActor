@@ -2,7 +2,7 @@
 # Die einzige Stelle im Projekt, die Apify-Feldnamen kennt.
 #
 # Nachfolger von apify_wrapper.py. Neu gegenüber dem alten Wrapper:
-#   - Timeout pro Aufruf, 90 Sekunden (03_ENTSCHEIDUNGEN.md C)
+#   - Timeout pro Aufruf, 180 Sekunden (03_ENTSCHEIDUNGEN.md C)
 #   - ein hängender oder abgebrochener Lauf wird wie ein leeres Ergebnis
 #     behandelt: kein Retry, der Kunde landet in Datei ③
 #   - der Lauf wird bei Zeitüberschreitung auf Apify wirklich abgebrochen,
@@ -20,8 +20,10 @@ from place_provider import Candidate
 
 logger = logging.getLogger(__name__)
 
-# 03_ENTSCHEIDUNGEN.md C: Timeout pro API-Aufruf.
-STANDARD_TIMEOUT_SEKUNDEN = 90
+# 03_ENTSCHEIDUNGEN.md C: Timeout pro API-Aufruf. Von 90 auf 180 Sekunden
+# heraufgesetzt, nachdem gemessene Kaltstarts bei 83, 87 und 91 Sekunden lagen —
+# 90 Sekunden hätten gesunde Aufrufe fälschlich nach ③ geschoben.
+STANDARD_TIMEOUT_SEKUNDEN = 180
 
 # Sekunden, die von der Frist abgezogen werden, damit dieser Provider vor dem
 # Notschalter im Lauf zum Zug kommt. Der Lauf schneidet jeden Aufruf nach

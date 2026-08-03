@@ -222,7 +222,7 @@ def test_abbruch_unter_fuenf_sekunden(tmp_path):
     provider = LangsamerProvider(sekunden=30)
     datenbank_pfad = tmp_path / 'lauf.sqlite'
 
-    worker = Worker(provider, datenbank_pfad, timeout_sekunden=90, arbeiter=6)
+    worker = Worker(provider, datenbank_pfad, timeout_sekunden=180, arbeiter=6)
     job_id = worker.starten(eingabe, str(tmp_path / 'ergebnis'))
 
     # Warten, bis die ersten Abfragen wirklich unterwegs sind.
@@ -461,7 +461,13 @@ def test_harter_abbruch_und_wiederaufnahme(tmp_path, arbeiter):
     offen = offener_lauf(datenbank_pfad)
     assert offen is not None
     assert offen['dateiname'] == eingabe.name
-    vorher_erledigt = offen['kunden_erledigt']
+
+    # Der Wiederaufsatzpunkt ist die Tabelle `kunde`, nicht `kunden_erledigt`
+    # (02_DATENVERTRAG.md §6). Der Zähler dient der Anzeige und darf nach einem
+    # Absturz hinterherhinken: er wird nach dem Kunden geschrieben, nicht mit
+    # ihm. Als Sollwert taugt er deshalb nicht.
+    with Datenbank(datenbank_pfad) as datenbank:
+        vorher_erledigt = len(datenbank.kunden_lesen(offen['id']))
     assert 0 < vorher_erledigt < 20, \
         f'{vorher_erledigt} Kunden vor dem Absturz — kein brauchbarer Zwischenstand'
 
@@ -480,8 +486,14 @@ def test_harter_abbruch_und_wiederaufnahme(tmp_path, arbeiter):
     nummern = [k['kunden_nr'] for k in kunden]
     assert len(nummern) == len(set(nummern)) == 20
 
-    # Kein Kunde wurde zweimal bei der Datenquelle geholt.
+    # Kein Kunde wurde zweimal bei der Datenquelle geholt: geholt wurde genau,
+    # was vor dem Absturz noch nicht in der Tabelle `kunde` stand.
     assert len(provider.aufrufe) == 20 - vorher_erledigt
+
+    # Und der Zähler steht nach dem Fortsetzen wieder auf dem Stand der Tabelle.
+    with Datenbank(datenbank_pfad) as datenbank:
+        stand = datenbank.fortschritt_lesen(offen['id'])
+    assert stand['kunden_erledigt'] == stand['kunden_total'] == 20
 
 
 def test_wiederaufnahme_liefert_dasselbe_wie_ein_lauf_am_stueck(tmp_path):

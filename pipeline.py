@@ -9,7 +9,7 @@
 # Drei Dinge macht dieser Lauf gegenüber dem alten Ablauf zusätzlich:
 #   - jeder Kandidat wird mit Score und Entscheid gespeichert, nicht nur der
 #     gewählte (02_DATENVERTRAG.md §5)
-#   - ein hängender Provider wird nach 90 Sekunden abgeschnitten; der Kunde
+#   - ein hängender Provider wird nach 180 Sekunden abgeschnitten; der Kunde
 #     landet dann in Datei ③ (03_ENTSCHEIDUNGEN.md C)
 #   - ein abgestürzter Lauf kann fortgesetzt werden, ohne einen Kunden doppelt
 #     abzufragen oder auszulassen
@@ -30,7 +30,7 @@ from place_provider import candidate_aus_zeile, leere_ausgabezeile
 logger = logging.getLogger(__name__)
 
 # 03_ENTSCHEIDUNGEN.md C
-STANDARD_TIMEOUT_SEKUNDEN = 90
+STANDARD_TIMEOUT_SEKUNDEN = 180
 STANDARD_ARBEITER = 6
 
 # Wie oft der Lauf beim Warten nachsieht, ob abgebrochen wurde. Bestimmt, wie
