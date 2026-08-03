@@ -19,6 +19,7 @@ getroffen und liegen in `agent/`. Du entwirfst nichts neu.
 2. `agent/01_PHASENPLAN.md` — welche Phase, welche Abnahmekriterien
 3. `agent/02_DATENVERTRAG.md` — Spalten, Zustände, Schema (verbindlich)
 4. `agent/03_ENTSCHEIDUNGEN.md` — feste Werte (höchste Priorität)
+5. `agent/05_TESTDATEN.md` — Testdaten und Datenschutz
 
 Bei Widerspruch: `03` schlägt `02` schlägt `01` schlägt `UMBAUPLAN` schlägt Prototyp.
 
@@ -30,7 +31,11 @@ Bei Widerspruch: `03` schlägt `02` schlägt `01` schlägt `UMBAUPLAN` schlägt 
    nie in keiner.
 3. **Jede Zeile trägt `score` und einen deutschen Klartextgrund.** Keine
    Pauschallabels, keine Fachsprache.
-4. **Kein Overengineering.** Ein Nutzer, ein Job. Was in `agent/03` unter
+4. **Das Repository ist öffentlich.** Keine echten Kundendaten hinein — nicht
+   als Testdatei, nicht als Beispiel im Commit, nicht als Zitat in den Findings.
+   Tests laufen gegen `agent/testdaten/fixture_optimierte_daten.csv`.
+   Regeln: `agent/05_TESTDATEN.md`.
+5. **Kein Overengineering.** Ein Nutzer, ein Job. Was in `agent/03` unter
    „wird nicht gebaut" steht, wird nicht gebaut — auch nicht vorbereitend.
 
 ## Arbeitsweise

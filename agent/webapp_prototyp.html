@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kundendaten anreichern</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#E6E8E3;
+  --card:#FCFDFB;
+  --ink:#121A1C;
+  --muted:#69736F;
+  --rule:#C9CEC6;
+  --rule-soft:#DCE0D8;
+  --fertig:#2C6E49;
+  --pruef:#8A5D00;
+  --fehl:#57666B;
+  --focus:#2C6E49;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'Archivo',system-ui,sans-serif;
+  font-size:16px;
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+
+/* ---------- Rahmen ---------- */
+.shell{max-width:780px;margin:0 auto;padding:0 24px 80px}
+.topbar{
+  border-bottom:1px solid var(--rule);
+  margin-bottom:0;
+  padding:20px 0 16px;
+  display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+}
+.wordmark{
+  font-weight:800;letter-spacing:-.035em;font-size:19px;
+}
+.topbar .sub{color:var(--muted);font-size:13px;letter-spacing:.02em}
+
+/* ---------- Schrittleiste ---------- */
+.rail{display:flex;gap:0;margin:0 0 40px;border-bottom:1px solid var(--rule-soft)}
+.rail div{
+  flex:1;padding:12px 4px 11px;font-size:11.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted);border-bottom:2px solid transparent;
+  margin-bottom:-1px;font-weight:500;
+}
+.rail div.on{color:var(--ink);border-bottom-color:var(--fertig);font-weight:600}
+.rail div.done{color:var(--fertig)}
+
+h1{
+  font-size:34px;line-height:1.12;letter-spacing:-.032em;font-weight:800;
+  margin:0 0 10px;
+}
+.lede{color:var(--muted);margin:0 0 34px;max-width:52ch;font-size:15.5px}
+h2{font-size:15px;font-weight:600;letter-spacing:-.01em;margin:0 0 6px}
+
+/* ---------- Karten ---------- */
+.choice{
+  display:block;width:100%;text-align:left;background:var(--card);
+  border:1px solid var(--rule);border-radius:3px;padding:22px 24px;
+  margin-bottom:14px;cursor:pointer;font:inherit;color:inherit;
+  transition:border-color .14s,transform .14s;
+}
+.choice:hover{border-color:var(--ink);transform:translateY(-1px)}
+.choice:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.choice .tag{
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);font-weight:600;display:block;margin-bottom:7px;
+}
+.choice .name{font-size:20px;font-weight:700;letter-spacing:-.02em;display:block;margin-bottom:6px}
+.choice p{margin:0 0 12px;color:var(--muted);font-size:14.5px;max-width:48ch}
+.fmt{
+  font-size:12.5px;background:#EFF1EC;border:1px solid var(--rule-soft);
+  border-radius:2px;padding:7px 10px;display:inline-block;color:var(--ink);
+}
+.meta{margin-top:12px;font-size:12.5px;color:var(--muted)}
+
+/* ---------- Upload ---------- */
+.drop{
+  background:var(--card);border:1px dashed var(--rule);border-radius:3px;
+  padding:44px 24px;text-align:center;cursor:pointer;
+  transition:border-color .14s,background .14s;
+}
+.drop:hover{border-color:var(--ink);background:#fff}
+.drop:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.drop .big{font-size:17px;font-weight:600;display:block;margin-bottom:5px}
+.drop .small{color:var(--muted);font-size:13.5px}
+
+.note{
+  border-left:2px solid var(--rule);padding:2px 0 2px 16px;margin:26px 0;
+  font-size:14px;color:var(--muted);max-width:56ch;
+}
+.note strong{color:var(--ink);font-weight:600}
+
+.warn{
+  background:#FBF6EA;border:1px solid #E3D3A8;border-radius:3px;
+  padding:18px 20px;margin:26px 0;
+}
+.warn .h{font-weight:700;font-size:14.5px;margin-bottom:7px;color:var(--pruef)}
+.warn p{margin:0 0 8px;font-size:14px;line-height:1.5}
+.warn .ex{font-size:12.5px;background:#F5EEDC;padding:5px 9px;border-radius:2px;display:inline-block}
+
+/* ---------- Buttons ---------- */
+.row{display:flex;gap:12px;align-items:center;margin-top:30px;flex-wrap:wrap}
+button.go{
+  background:var(--fertig);color:#fff;border:0;border-radius:3px;
+  padding:13px 26px;font:inherit;font-weight:600;font-size:15px;cursor:pointer;
+  letter-spacing:-.005em;
+}
+button.go:hover{background:#25583C}
+button.go:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+button.quiet{
+  background:none;border:0;color:var(--muted);font:inherit;font-size:14px;
+  cursor:pointer;text-decoration:underline;text-underline-offset:3px;padding:6px 2px;
+}
+button.quiet:hover{color:var(--ink)}
+button.quiet:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+/* ---------- Lauf ---------- */
+.counter{
+  font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;
+  font-size:52px;font-weight:700;letter-spacing:-.045em;line-height:1;
+  margin:4px 0 4px;
+}
+.counter span{color:var(--muted);font-size:22px;font-weight:400;letter-spacing:-.02em}
+.eta{color:var(--muted);font-size:14.5px;margin-bottom:26px}
+.bar{height:3px;background:var(--rule-soft);border-radius:2px;overflow:hidden;margin-bottom:34px}
+.bar i{display:block;height:100%;background:var(--fertig);width:0;transition:width .35s linear}
+
+.buckets{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule-soft);border:1px solid var(--rule-soft);border-radius:3px;overflow:hidden;margin-bottom:34px}
+.bucket{background:var(--card);padding:16px 16px 15px}
+.bucket .n{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;font-size:27px;font-weight:700;letter-spacing:-.03em;line-height:1.1}
+.bucket .l{font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-top:5px}
+.bucket.f .n{color:var(--fertig)} .bucket.p .n{color:var(--pruef)} .bucket.x .n{color:var(--fehl)}
+
+/* Signature: das Laufband */
+.ticker{
+  background:var(--card);border:1px solid var(--rule-soft);border-radius:3px;
+  height:212px;overflow:hidden;position:relative;
+}
+.ticker::after{
+  content:'';position:absolute;left:0;right:0;bottom:0;height:56px;
+  background:linear-gradient(transparent,var(--card));pointer-events:none;
+}
+.ticker ul{list-style:none;margin:0;padding:0}
+.ticker li{
+  display:flex;gap:12px;align-items:baseline;padding:9px 16px;
+  border-bottom:1px solid #F0F2ED;font-size:13.5px;
+  animation:slide .3s ease-out;
+}
+@keyframes slide{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){
+  .ticker li{animation:none}
+  .bar i{transition:none}
+  .choice{transition:none}
+}
+.ticker .kn{font-family:'JetBrains Mono',monospace;color:var(--muted);font-size:12.5px;min-width:56px}
+.ticker .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ticker .st{font-size:11.5px;font-weight:600;letter-spacing:.03em;white-space:nowrap}
+.st.f{color:var(--fertig)} .st.p{color:var(--pruef)} .st.x{color:var(--fehl)}
+
+.leave{margin-top:24px;font-size:13.5px;color:var(--muted);max-width:54ch}
+
+/* ---------- Ergebnis ---------- */
+.files{display:flex;flex-direction:column;gap:12px;margin-bottom:8px}
+.file{
+  display:flex;align-items:center;gap:18px;background:var(--card);
+  border:1px solid var(--rule);border-left-width:3px;border-radius:3px;padding:18px 22px;
+}
+.file.f{border-left-color:var(--fertig)}
+.file.p{border-left-color:var(--pruef)}
+.file.x{border-left-color:var(--fehl)}
+.file .txt{flex:1;min-width:0}
+.file .nm{font-weight:700;font-size:16px;letter-spacing:-.015em;margin-bottom:3px}
+.file .ds{color:var(--muted);font-size:13.5px}
+.file .ct{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;font-size:20px;font-weight:700;letter-spacing:-.03em;text-align:right}
+.file .ct small{display:block;font-family:'Archivo';font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.dl{
+  border:1px solid var(--ink);background:none;color:var(--ink);border-radius:3px;
+  padding:9px 16px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap;
+}
+.dl:hover{background:var(--ink);color:var(--card)}
+.dl:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+.screen{display:none}
+.screen.on{display:block}
+
+.flag{
+  position:fixed;right:14px;bottom:14px;background:var(--ink);color:#DDE2DC;
+  font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;
+  padding:7px 12px;border-radius:2px;z-index:9;
+}
+@media(max-width:600px){
+  h1{font-size:27px}
+  .counter{font-size:40px}
+  .buckets{grid-template-columns:1fr}
+  .file{flex-wrap:wrap}
+  .rail div{font-size:10px;letter-spacing:.05em}
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="topbar">
+    <span class="wordmark">Kundendaten anreichern</span>
+    <span class="sub">Google Maps → ERP</span>
+  </div>
+
+  <nav class="rail" aria-label="Ablauf">
+    <div id="r1" class="on">Art wählen</div>
+    <div id="r2">Datei</div>
+    <div id="r3">Lauf</div>
+    <div id="r4">Ergebnis</div>
+  </nav>
+
+  <!-- ============ 1 ============ -->
+  <section class="screen on" id="s1">
+    <h1>Was haben Sie zu den Kunden?</h1>
+    <p class="lede">Davon hängt ab, welche Datei Sie hochladen. Wenn Sie unsicher sind: die obere Variante passt fast immer.</p>
+
+    <button class="choice" onclick="go(2,'a')">
+      <span class="tag">Erstanreicherung</span>
+      <span class="name">Nur Name und Adresse</span>
+      <p>Wir suchen jeden Kunden auf Google Maps und entscheiden, welcher Treffer der richtige ist.</p>
+      <span class="fmt mono">SearchString ; PLZ ; Stadt ; KundenNr</span>
+      <div class="meta">Rund 2 Stunden für 2'500 Kunden</div>
+    </button>
+
+    <button class="choice" onclick="go(2,'b')">
+      <span class="tag">Auffrischen</span>
+      <span class="name">Google-ID ist schon im ERP</span>
+      <p>Wir holen die aktuellen Daten direkt über die gespeicherte ID. Kein Suchen, kein Raten.</p>
+      <span class="fmt mono">placeId ; lat ; lng ; KundenNr</span>
+      <div class="meta">Rund 10 Minuten für 2'500 Kunden</div>
+    </button>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section class="screen" id="s2">
+    <h1>Datei hochladen</h1>
+    <p class="lede" id="s2lede"></p>
+
+    <div class="drop" tabindex="0" role="button" onclick="check()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();check()}">
+      <span class="big">CSV hierher ziehen</span>
+      <span class="small">oder klicken zum Auswählen · Trennzeichen Semikolon</span>
+    </div>
+
+    <div class="note" id="knhint">
+      <strong>KundenNr wird nicht für die Suche verwendet.</strong> Google kennt Ihre
+      Kundennummern nicht. Sie werden unverändert mitgeführt, damit Sie die Ergebnisse
+      beim Import ins ERP wieder zuordnen können.
+    </div>
+
+    <div id="afterfile" style="display:none">
+      <div class="warn" id="warnbox">
+        <div class="h">312 Zeilen prüfen wir nicht erfolgreich</div>
+        <p>Im Strassenfeld steht kein Strassenname, sondern etwas anderes. Beispiel Zeile 1'204:</p>
+        <p><span class="ex mono">Emil Frey AG, KST 715611 0, 5745 Safenwil</span></p>
+        <p>Diese Kunden landen voraussichtlich in <em>Zur Prüfung</em>. Sie können sie
+        vorher im ERP korrigieren oder trotzdem starten.</p>
+      </div>
+
+      <div class="note">
+        <strong>InputData_Prod.csv</strong> · 2'513 Kunden erkannt · Spalten vollständig
+      </div>
+
+      <div class="row">
+        <button class="go" onclick="go(3)">Lauf starten</button>
+        <button class="quiet" onclick="go(1)">Andere Datei wählen</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section class="screen" id="s3">
+    <h1>Läuft</h1>
+    <div class="counter mono"><span id="cdone">0</span> <span>von 2'513 Kunden</span></div>
+    <div class="eta" id="ceta">Noch ungefähr 2 Stunden</div>
+    <div class="bar"><i id="cbar"></i></div>
+
+    <div class="buckets">
+      <div class="bucket f"><div class="n mono" id="bf">0</div><div class="l">Fertig</div></div>
+      <div class="bucket p"><div class="n mono" id="bp">0</div><div class="l">Zur Prüfung</div></div>
+      <div class="bucket x"><div class="n mono" id="bx">0</div><div class="l">Nicht möglich</div></div>
+    </div>
+
+    <h2>Zuletzt verarbeitet</h2>
+    <div class="ticker"><ul id="tick"></ul></div>
+
+    <p class="leave">Sie können dieses Fenster schliessen — der Lauf geht weiter.
+    Wir schicken eine Mail, sobald er fertig ist oder etwas schiefgeht.</p>
+
+    <div class="row">
+      <button class="quiet" onclick="stopRun();go(4)">Zum Ergebnis springen (Demo)</button>
+      <button class="quiet" onclick="stopRun();go(1)">Lauf abbrechen</button>
+    </div>
+  </section>
+
+  <!-- ============ 4 ============ -->
+  <section class="screen" id="s4">
+    <h1>Fertig</h1>
+    <p class="lede">2'513 Kunden in 1 Stunde 54 Minuten. Drei Dateien liegen bereit.</p>
+
+    <div class="files">
+      <div class="file f">
+        <div class="txt">
+          <div class="nm">Fertig fürs ERP</div>
+          <div class="ds">Kann direkt importiert werden</div>
+        </div>
+        <div class="ct mono">1'776<small>Kunden</small></div>
+        <button class="dl">Herunterladen</button>
+      </div>
+
+      <div class="file p">
+        <div class="txt">
+          <div class="nm">Zur Prüfung</div>
+          <div class="ds">Mehrere mögliche Treffer — Sie entscheiden. Grund steht in jeder Zeile.</div>
+        </div>
+        <div class="ct mono">572<small>Kunden</small></div>
+        <button class="dl">Herunterladen</button>
+      </div>
+
+      <div class="file x">
+        <div class="txt">
+          <div class="nm">Nicht möglich</div>
+          <div class="ds">Nichts gefunden. Adresse im ERP prüfen, dann neu versuchen.</div>
+        </div>
+        <div class="ct mono">165<small>Kunden</small></div>
+        <button class="dl">Herunterladen</button>
+      </div>
+    </div>
+
+    <div class="note">
+      Geprüfte Zeilen aus <strong>Zur Prüfung</strong> können Sie wieder hochladen —
+      sie werden dann in die ERP-Datei übernommen.
+    </div>
+
+    <div class="row">
+      <button class="go" onclick="go(1)">Neuen Lauf starten</button>
+    </div>
+  </section>
+</div>
+
+<div class="flag">Prototyp — Daten erfunden</div>
+
+<script>
+const NAMES=[
+ ["200092","Valora Schweiz AG, Wohlen","f"],["200147","Dhingra Convenience Shop","f"],
+ ["107","Emil Frey AG, Safenwil","p"],["200169","Spar Supermarkt, Regensdorf","f"],
+ ["206025","Axpo Services SA, Baden","f"],["110","Untere Seetal LKG","p"],
+ ["206027","Arwo Stiftung, Wettingen","f"],["200111","Valora, Beinwil am See","f"],
+ ["201884","Freibad Full","f"],["203311","Berggasthaus Hundwilerhöhe","p"],
+ ["204120","Volg Dorfladen, Full","f"],["205002","Boucherie, Vevey","x"],
+ ["207781","Migros Filiale, Baden","f"],["209044","Restaurant Bären, Aarau","p"],
+ ["210338","BP Service Bülach","f"],["211907","Metzgerei Hofer, Brugg","f"]
+];
+const LBL={f:"Fertig",p:"Zur Prüfung",x:"Nicht möglich"};
+let timer=null,n=0,c={f:0,p:0,x:0};
+
+function go(s,mode){
+  stopRun();
+  document.querySelectorAll('.screen').forEach(e=>e.classList.remove('on'));
+  document.getElementById('s'+s).classList.add('on');
+  for(let i=1;i<=4;i++){
+    const r=document.getElementById('r'+i);
+    r.className = i===s ? 'on' : (i<s ? 'done' : '');
+  }
+  if(s===2) setupUpload(mode);
+  if(s===3) startRun();
+  window.scrollTo({top:0,behavior:'instant'});
+}
+
+function setupUpload(mode){
+  const m = mode || window._mode || 'a';
+  window._mode = m;
+  document.getElementById('afterfile').style.display='none';
+  document.getElementById('s2lede').textContent = m==='a'
+    ? 'Semikolon-getrennt, mit den Spalten SearchString, PLZ, Stadt und KundenNr.'
+    : 'Semikolon-getrennt, mit den Spalten placeId, lat, lng und KundenNr.';
+  document.getElementById('warnbox').style.display = m==='a' ? 'block' : 'none';
+}
+
+function check(){
+  document.getElementById('afterfile').style.display='block';
+}
+
+function startRun(){
+  n=0; c={f:0,p:0,x:0};
+  document.getElementById('tick').innerHTML='';
+  ['bf','bp','bx'].forEach(id=>document.getElementById(id).textContent='0');
+  timer=setInterval(step,620);
+}
+function stopRun(){ if(timer){clearInterval(timer);timer=null;} }
+
+function step(){
+  n++;
+  const r=NAMES[Math.floor(Math.random()*NAMES.length)];
+  c[r[2]]++;
+  const ul=document.getElementById('tick');
+  const li=document.createElement('li');
+  li.innerHTML='<span class="kn mono">'+r[0]+'</span>'+
+               '<span class="nm">'+r[1]+'</span>'+
+               '<span class="st '+r[2]+'">'+LBL[r[2]]+'</span>';
+  ul.prepend(li);
+  while(ul.children.length>9) ul.lastChild.remove();
+
+  const shown = 1204 + n;
+  document.getElementById('cdone').textContent = swiss(shown);
+  document.getElementById('bf').textContent = swiss(842+c.f);
+  document.getElementById('bp').textContent = swiss(287+c.p);
+  document.getElementById('bx').textContent = swiss(75+c.x);
+  document.getElementById('cbar').style.width = (shown/2513*100)+'%';
+  const min = Math.max(1, Math.round((2513-shown)*0.045));
+  document.getElementById('ceta').textContent =
+    min>60 ? 'Noch ungefähr '+Math.round(min/60)+' Stunden' : 'Noch ungefähr '+min+' Minuten';
+}
+function swiss(x){ return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g,"’"); }
+</script>
+</body>
+</html>
