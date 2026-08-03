@@ -2,6 +2,9 @@
 # cli.py
 # Schlanke Kommandozeile ohne Tkinter. Zwei Befehle:
 #
+#   python cli.py pruefen <eingabe.csv>
+#       sagt vor dem Lauf, was an der Datei schiefgehen wird
+#
 #   python cli.py bereinigen <angereicherte_datei.csv>
 #       wertet eine bereits angereicherte Datei aus (Phase 1)
 #
@@ -31,6 +34,7 @@ import pandas as pd
 from data_cleaner import DataCleaner
 from fake_provider import FakeProvider
 from pipeline import STANDARD_ARBEITER, STANDARD_TIMEOUT_SEKUNDEN
+from upload_pruefung import pruefe_datei
 from worker import LaeuftBereits, Worker, offener_lauf
 
 LOG_DIR = Path(__file__).resolve().parent / 'logs'
@@ -147,6 +151,23 @@ def bereinigen(args) -> int:
 # Befehl: lauf
 # ==========================================================================
 
+def pruefen(args) -> int:
+    """Prüft eine Datei, ohne etwas zu starten."""
+    if not args.eingabe.exists():
+        print(f'Die Datei "{args.eingabe}" gibt es nicht. Bitte den Pfad prüfen.')
+        return 1
+    try:
+        bericht = pruefe_datei(args.eingabe)
+    except Exception:
+        logging.getLogger(__name__).exception('Prüfung abgebrochen')
+        print(f'Die Datei "{args.eingabe.name}" konnte nicht gelesen werden.')
+        print('Erwartet wird eine CSV-Datei mit Semikolon als Trennzeichen.')
+        return 1
+
+    print(bericht.als_text())
+    return 0 if bericht.start_moeglich else 1
+
+
 def lauf(args) -> int:
     return _lauf_oder_fortsetzen(args, fortsetzen=False)
 
@@ -159,6 +180,17 @@ def _lauf_oder_fortsetzen(args, fortsetzen: bool) -> int:
     eingabe: Path = args.eingabe
     df = _eingabe_pruefen(eingabe, ('SearchString', 'PLZ', 'KundenNr'))
     if df is None:
+        return 1
+
+    # Vor dem Zweistundenlauf: was wird an dieser Datei schiefgehen?
+    bericht = pruefe_datei(eingabe)
+    if bericht.hinweise or not bericht.start_moeglich:
+        for hinweis in bericht.befunde:
+            print()
+            print(hinweis.als_text())
+        print()
+    if not bericht.start_moeglich:
+        print('Der Lauf wird nicht gestartet.')
         return 1
 
     try:
@@ -275,6 +307,10 @@ def main(argv=None) -> int:
     b = befehle.add_parser('bereinigen', parents=[gemeinsam],
                            help='eine bereits angereicherte Datei auswerten')
     b.set_defaults(funktion=bereinigen)
+
+    p = befehle.add_parser('pruefen', parents=[gemeinsam],
+                           help='eine Eingabedatei prüfen, ohne sie zu starten')
+    p.set_defaults(funktion=pruefen)
 
     lauf_optionen = argparse.ArgumentParser(add_help=False)
     lauf_optionen.add_argument('--quelle', choices=('fake', 'apify'), default='fake',

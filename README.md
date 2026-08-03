@@ -27,6 +27,7 @@ google-maps-scraper-app/
 │
 ├── cli.py                \# Kommandozeile: Lauf und Bereinigung
 │
+├── upload\_pruefung.py    \# Prüft die Eingabedatei, bevor der Lauf startet
 ├── worker.py             \# Der Lauf im Hintergrund: starten, abbrechen, fortsetzen
 ├── pipeline.py           \# Ein Lauf: Eingabe → Provider → Datenbank → drei Dateien
 ├── place\_provider.py     \# Candidate und die Provider-Schnittstelle
@@ -108,10 +109,27 @@ Stelle sicher, dass deine virtuelle Umgebung (`venv`) aktiv ist.
 > Phase 5, der Hintergrundlauf mit Wiederaufnahme in Phase 3. Bis dahin läuft
 > alles über die Kommandozeile.
 
+### Schritt 0: Die Datei vorher prüfen
+
+Ein Lauf über 2'500 Kunden dauert Stunden. Diese Prüfung sagt in Sekunden,
+was daran schiefgehen wird:
+
+```bash
+python cli.py pruefen Daten/DEINEDATEI.csv
+```
+
+Gemeldet werden fehlende Spalten, Zeilen ohne Strassennamen im Strassenfeld
+(zum Beispiel eine Kostenstelle) und Zeilen, deren Name nur eine Branche ist
+(`Boucherie`, `Lebensmittelgeschäft`). Jede Meldung nennt die Anzahl und eine
+Beispielzeile mit ihrer Nummer, damit sie sich in Excel wiederfinden lässt.
+
+Diese drei Hinweise **blockieren nicht** — du entscheidest, ob du trotzdem
+läufst. Abgewiesen wird nur eine Datei mit mehr als 10'000 Zeilen.
+
 ### Schritt 1: Anreichern und auswerten in einem Lauf
 
 Die Eingabedatei braucht die Spalten `SearchString`, `PLZ`, `KundenNr`
-(`Stadt` ist freiwillig).
+(`Stadt` ist freiwillig). Die Prüfung aus Schritt 0 läuft automatisch mit.
 
 ```bash
 python cli.py lauf Daten/DEINEDATEI.csv --quelle apify
