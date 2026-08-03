@@ -145,6 +145,11 @@ Zusätzlich: Zeilenobergrenze 10'000, Pflichtspalten, Zeilenzahl melden.
 - [ ] **Messung dokumentiert:** Wie viele Zeilen einer realen Eingabedatei jede
       der drei Prüfungen trifft, und wie viele Prüffälle dadurch voraussichtlich
       entfallen
+- [ ] **Laufzeitmessung dokumentiert:** mindestens zehn aufeinanderfolgende
+      echte Apify-Aufrufe mit Einzelzeiten. Klärt die offene Frage aus Phase 3,
+      warum das Betriebsprotokoll rund 17 Sekunden nennt und Einzelmessungen
+      rund 85. Falls Kaltstarts regelmässig über 180 s liegen, ist das ein
+      Befund für den Prüfer — die Frist wird nicht eigenmächtig erhöht
 
 Die Messung entscheidet später, ob eine Prüfmaske gebaut wird. Ohne sie ist die
 Frage nicht beantwortbar.
@@ -161,6 +166,12 @@ FastAPI + Jinja2 + HTMX. Vier Seiten: Art wählen, Datei, Lauf, Ergebnis.
 Statusseite pollt alle 5 Sekunden. Downloads der drei Dateien.
 Fehlerseite in verständlichem Deutsch.
 
+**Sauberes Beenden.** Befund aus Phase 3: Python wartet beim Beenden des
+Prozesses auf abgebrochene Abfragen. Der Lauf steht sofort und die Daten sind
+geschrieben, aber das Schliessen kann sich um bis zu 175 Sekunden verzögern.
+In der Webapp betrifft das den Serverstopp — für den Nutzer sieht ein Fenster,
+das sich drei Minuten nicht schliesst, wie ein Absturz aus.
+
 Der Prototyp ist verbindlich für **Ablauf, Texte und Reihenfolge**, nicht für CSS.
 Auf jeder Seite genau eine Haupthandlung.
 
@@ -172,6 +183,9 @@ Auf jeder Seite genau eine Haupthandlung.
 - [ ] Alle drei Dateien laden korrekt herunter, Semikolon, `utf-8-sig`
 - [ ] Keine englische Zeichenkette in der Oberfläche, kein Stacktrace sichtbar
 - [ ] Bedienbar mit Tastatur, Fokus sichtbar
+- [ ] Server lässt sich während eines laufenden Jobs in **unter 10 Sekunden**
+      beenden; danach ist der Job als `LAEUFT` in der Datenbank und wird beim
+      nächsten Start zur Fortsetzung angeboten
 
 ---
 
