@@ -101,7 +101,8 @@ def entfernung_in_worten(meter: float) -> str:
 # Die Entscheidung
 # ==========================================================================
 
-def entscheide_kunde(kunden_nr: str, stamm: dict, kandidat) -> dict:
+def entscheide_kunde(kunden_nr: str, stamm: dict, kandidat,
+                     erreichbar: bool = True) -> dict:
     """
     Entscheidet einen Kunden im Modus B.
 
@@ -111,6 +112,12 @@ def entscheide_kunde(kunden_nr: str, stamm: dict, kandidat) -> dict:
         dauerhaft geschlossen    → ② PRUEFUNG (geschlossen)
         weiter als 200 m weg     → ② PRUEFUNG (Standort abweichend)
         sonst                    → ① OK (ID)
+
+    `erreichbar=False` heisst: die Abfrage ist fehlgeschlagen, Google hat gar
+    nicht geantwortet. Dann darf hier **nicht** «gelöscht» stehen — das wäre
+    eine falsche Aussage über die Daten des Kunden. Der Fall bekommt denselben
+    Zustand wie ein leeres Ergebnis (§3: «API lieferte nichts»), aber einen
+    Grund, der die Wahrheit sagt.
 
     Returns dasselbe wie `DataCleaner.entscheide_kunde`: vier Listen, von denen
     genau eine der ersten drei gefüllt ist.
@@ -124,6 +131,15 @@ def entscheide_kunde(kunden_nr: str, stamm: dict, kandidat) -> dict:
             kunden_nr, stamm, None, 'NICHT_MOEGLICH (Eingabe unbrauchbar)',
             SCORE_OHNE_TREFFER,
             'In dieser Zeile fehlt die Google-ID. Ohne sie ist kein Abruf möglich.'))
+        return ablage
+
+    if not erreichbar:
+        ablage['nicht_moeglich'].append(_zeile(
+            kunden_nr, stamm, None, 'NICHT_MOEGLICH (kein Ergebnis)',
+            SCORE_OHNE_TREFFER,
+            'Die Abfrage bei Google ist fehlgeschlagen; dieser Betrieb wurde '
+            'nicht geprüft. Ob der Eintrag noch besteht, ist damit offen — '
+            'bitte den Kunden später noch einmal auffrischen.'))
         return ablage
 
     if kandidat is None:

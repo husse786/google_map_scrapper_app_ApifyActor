@@ -1,12 +1,40 @@
-pandas
-requests
-apify-client
-thefuzz
-python-levenshtein
-python-dotenv
-fastapi
-uvicorn
-jinja2
-python-multipart
-pytest
-httpx
+# Feste Fassungen. Nicht ohne Prüfung anheben.
+#
+# Zwei davon tragen Fachlogik, nicht nur Technik:
+#
+#   apify-client  Die Fehlerbehandlung liest `fehler.type` und `fehler.message`
+#                 — Innereien dieser Bibliothek. Benennt eine neue Fassung sie
+#                 um, greifen die sechs bekannten Fehlerarten nicht mehr, und
+#                 ein erschöpftes Kontingent sieht wieder aus wie «nichts
+#                 gefunden». Genau der Fehler, dessen Behebung Phase 7 ausmacht.
+#                 Fassung 3.1.1 ist ausserdem unverträglich: dort heissen
+#                 `timeout_secs` und `wait_secs` anders. Einzelheiten in
+#                 agent/findings/FINDINGS_PHASE_7_v1.2.md.
+#
+#   thefuzz       Alle Schwellenwerte aus 03_ENTSCHEIDUNGEN.md B — 90 für den
+#                 Strassennamen, 80 für einen hohen Treffer, 60 für den
+#                 Einzeltreffer — sind an das Verhalten dieser Fassung gemessen.
+#                 Eine andere Fassung verschiebt sie stillschweigend.
+#
+# Unter diesen Fassungen laufen die Tests grün, und mit ihnen liefen die echten
+# Apify-Aufrufe der Phasen 2, 3 und 4.
+
+# Fachlogik — die Fassung ist Teil der Vorgabe
+apify-client==2.0.0
+thefuzz==0.22.1
+python-Levenshtein==0.27.1
+
+# Daten und Netz
+pandas==2.3.2
+requests==2.32.5
+python-dotenv==1.2.1
+
+# Weboberfläche
+fastapi==0.141.1
+uvicorn==0.52.1
+jinja2==3.1.6
+python-multipart==0.0.32
+
+# Tests
+pytest==9.1.1
+httpx==0.28.1

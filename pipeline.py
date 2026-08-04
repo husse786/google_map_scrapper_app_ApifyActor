@@ -77,6 +77,17 @@ class Abgebrochen(Exception):
     """Der Lauf wurde vom Nutzer gestoppt."""
 
 
+class Ausgefallen(list):
+    """
+    Kein Ergebnis, sondern eine ausgefallene Abfrage.
+
+    Verhält sich wie die leere Liste, ist aber unterscheidbar. Die ersten neun
+    Fehlschläge hintereinander werden geduldet — der Kunde muss danach trotzdem
+    eine Begründung tragen, die stimmt. «Nichts gefunden» und «wir konnten
+    nicht fragen» sind zwei verschiedene Aussagen.
+    """
+
+
 class Lauf:
     """Führt einen kompletten Durchgang aus: anreichern, entscheiden, schreiben."""
 
@@ -312,7 +323,7 @@ class Lauf:
                            f'{MAX_FEHLSCHLAEGE_HINTEREINANDER} hintereinander. '
                            f'Dieser Kunde gilt als ohne Ergebnis, der Lauf '
                            f'macht weiter.')
-            return []
+            return Ausgefallen()
 
         self._fehlschlaege = 0
         return ergebnis
@@ -360,7 +371,10 @@ class Lauf:
         laenge = str(stamm.get('lng', '')).strip()
         kandidat = kandidaten[0] if kandidaten else None
 
-        ablage = modus_b.entscheide_kunde(kunden_nr, stamm, kandidat)
+        # Eine ausgefallene Abfrage ist kein gelöschter Eintrag.
+        ablage = modus_b.entscheide_kunde(
+            kunden_nr, stamm, kandidat,
+            erreichbar=not isinstance(kandidaten, Ausgefallen))
         datei = self._gewaehlte_datei(ablage)
         kopfzeile = ablage[datei][0]
 
@@ -392,8 +406,12 @@ class Lauf:
         if self.modus == 'B':
             stamm = {'placeId': kunde['place_id'] or '',
                      'lat': kunde['lat'] or '', 'lng': kunde['lng'] or ''}
+            # Beim Fortsetzen steht die damalige Entscheidung in `qualitaet`:
+            # war die Abfrage ausgefallen, bleibt sie ausgefallen.
+            erreichbar = kunde['qualitaet'] != 'NICHT_MOEGLICH (kein Ergebnis)'
             return modus_b.entscheide_kunde(
-                kunde['kunden_nr'], stamm, kandidaten[0] if kandidaten else None)
+                kunde['kunden_nr'], stamm,
+                kandidaten[0] if kandidaten else None, erreichbar=erreichbar)
 
         gruppe = self._als_gruppe(kunde['kunden_nr'], kunde['search_string'] or '',
                                   kunde['plz'] or '', kunde['stadt'] or '', kandidaten)

@@ -8,12 +8,17 @@
 # Verwendet wird die Places API (New), Endpunkt "Place Details". Abgefragt
 # werden nur die Felder, die im Datenvertrag stehen — jedes zusätzliche Feld
 # kostet Geld, ohne dass es jemand liest.
+#
+# Ein leeres Ergebnis heisst hier: Google kennt diese Id nicht mehr. Jeder
+# andere Fehlschlag ist keine Aussage über den Kunden und wird als
+# `QuelleNichtVerfuegbar` weitergereicht — sonst würde ein Netzausfall dem
+# Sachbearbeiter melden, sein Kunde sei bei Google gelöscht worden.
 
 import logging
 
 import requests
 
-from place_provider import Candidate
+from place_provider import Candidate, QuelleNichtVerfuegbar
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,37 @@ FELDMASKE = ','.join([
     'regularOpeningHours.weekdayDescriptions',
     'businessStatus',
 ])
+
+# Antworten, bei denen Weitermachen nichts bringt. Der Text daneben ist das,
+# was der Sachbearbeiter liest — mit einer Handlungsanweisung.
+ENDGUELTIGE_ANTWORTEN = {
+    401: 'Google nimmt den Schlüssel nicht an. Bitte den Eintrag '
+         'GOOGLE_API_KEY in der Datei .env prüfen.',
+    403: 'Google verweigert den Zugriff. Bitte im Google-Konto nachsehen, ob '
+         'die Places API für diesen Schlüssel freigeschaltet ist und ob eine '
+         'Zahlungsart hinterlegt ist.',
+    429: 'Das Kontingent bei Google ist erschöpft, oder es wurden zu viele '
+         'Anfragen in kurzer Zeit gestellt. Der Lauf wurde gestoppt. Bitte im '
+         'Google-Konto das Kontingent prüfen und den Lauf später fortsetzen.',
+}
+
+NETZ_MELDUNG = (
+    'Google ist nicht erreichbar. Meistens liegt es an der Internetverbindung '
+    'dieses Rechners. Bitte die Verbindung prüfen und den Lauf danach '
+    'fortsetzen — die bereits verarbeiteten Kunden bleiben erhalten.')
+
+STOERUNG_MELDUNG = (
+    'Google antwortet gerade nicht — eine Störung auf deren Seite. Bitte es '
+    'später noch einmal versuchen und den Lauf fortsetzen — die bereits '
+    'verarbeiteten Kunden bleiben erhalten.')
+
+UNBEKANNTE_MELDUNG = (
+    'Google hat die Anfragen mehrfach hintereinander mit einem Fehler '
+    'beantwortet, den wir nicht einordnen können. Der Lauf wurde gestoppt, '
+    'damit keine Kunden fälschlich als gelöscht gelten. Bitte es später noch '
+    'einmal versuchen und den Lauf fortsetzen — die bereits verarbeiteten '
+    'Kunden bleiben erhalten. Was Google gemeldet hat, steht im Protokoll im '
+    'Ordner logs.')
 
 # Google-Adressbestandteil → Candidate-Feld
 STRASSE = 'route'
@@ -63,9 +99,16 @@ class GoogleProvider:
         """
         Holt die aktuellen Daten zu einer Google-ID.
 
-        Liefert `None`, wenn die ID unbekannt ist, der Abruf scheitert oder
-        Google nichts zurückgibt. Der Aufrufer behandelt alle drei Fälle
-        gleich: der Kunde landet in Datei ③ (03_ENTSCHEIDUNGEN.md B4).
+        **`None` heisst: diese Id kennt Google nicht mehr.** Das ist eine
+        Aussage, und der Kunde landet damit in ③ mit dem Grund «Eintrag
+        gelöscht oder ersetzt» (03_ENTSCHEIDUNGEN.md B4).
+
+        **Alles andere ist keine Aussage** und kommt als
+        `QuelleNichtVerfuegbar` heraus. Ein Netzausfall darf nicht als
+        gelöschter Kunde erscheinen — der Sachbearbeiter würde sonst einen
+        intakten Datensatz aus dem ERP nehmen. Schlüssel und Kontingent
+        stoppen den Lauf sofort, Störungen und Netzfehler nach zehn
+        Fehlschlägen hintereinander.
         """
         kennung = str(place_id).strip()
         if not kennung:
@@ -80,24 +123,30 @@ class GoogleProvider:
                 timeout=self.timeout_sekunden)
         except requests.RequestException as fehler:
             logger.error(f'Google nicht erreichbar für "{kennung}": {fehler}')
-            return None
+            raise QuelleNichtVerfuegbar(NETZ_MELDUNG, endgueltig=False) from fehler
 
-        if antwort.status_code == 404:
+        if antwort.status_code == 404 or _meldet_nicht_gefunden(antwort):
             logger.info(f'Google kennt die Id "{kennung}" nicht mehr.')
             return None
+
         if antwort.status_code != 200:
             logger.error(f'Google antwortet mit {antwort.status_code} für '
                          f'"{kennung}": {antwort.text[:200]}')
-            return None
+            _pruefen_ob_endgueltig(antwort.status_code)
+            if 500 <= antwort.status_code < 600:
+                raise QuelleNichtVerfuegbar(STOERUNG_MELDUNG, endgueltig=False)
+            raise QuelleNichtVerfuegbar(UNBEKANNTE_MELDUNG, endgueltig=False)
 
         try:
             rohdaten = antwort.json()
         except ValueError:
             logger.error(f'Antwort von Google für "{kennung}" ist kein JSON.')
-            return None
+            raise QuelleNichtVerfuegbar(UNBEKANNTE_MELDUNG, endgueltig=False)
 
         if not rohdaten:
-            return None
+            logger.error(f'Google antwortet für "{kennung}" mit einem leeren '
+                         f'Datensatz.')
+            raise QuelleNichtVerfuegbar(UNBEKANNTE_MELDUNG, endgueltig=False)
         return self.normalisieren(rohdaten)
 
     def fetch_by_text(self, search_string: str, plz: str) -> list:
@@ -133,6 +182,28 @@ class GoogleProvider:
             permanently_closed=str(status == 'CLOSED_PERMANENTLY'),
             temporarily_closed=str(status == 'CLOSED_TEMPORARILY'),
         )
+
+
+def _meldet_nicht_gefunden(antwort) -> bool:
+    """
+    Sagt Google im Text der Antwort, dass es die Id nicht kennt?
+
+    Manche Fehler kommen nicht als 404, sondern als 400 mit `NOT_FOUND` im
+    Rumpf. Auch das ist eine Aussage über diesen einen Kunden, kein Ausfall.
+    """
+    if antwort.status_code == 200:
+        return False
+    try:
+        text = antwort.text or ''
+    except Exception:
+        return False
+    return 'NOT_FOUND' in text
+
+
+def _pruefen_ob_endgueltig(status: int) -> None:
+    """Schlüssel, Rechte, Kontingent: danach bringt kein weiterer Aufruf etwas."""
+    if status in ENDGUELTIGE_ANTWORTEN:
+        raise QuelleNichtVerfuegbar(ENDGUELTIGE_ANTWORTEN[status])
 
 
 def _adressbestandteile(bestandteile: list) -> dict:

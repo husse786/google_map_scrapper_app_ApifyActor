@@ -571,8 +571,17 @@ def test_google_unbekannte_id_liefert_nichts():
     assert provider.fetch_by_id('GIBT_ES_NICHT') is None
 
 
-def test_google_fehler_liefert_nichts_statt_absturz():
+def test_google_fehler_ist_kein_geloeschter_kunde():
+    """
+    Geändert in Phase 7 v1.2 (K2).
+
+    Vorher lieferte ein Netzfehler `None` — und der Aufrufer machte daraus
+    «Der Betrieb wurde bei Google gelöscht». Eine falsche Aussage über die
+    Daten des Kunden. Jetzt kommt eine Ausnahme, kein Ergebnis.
+    """
     import requests
+
+    from place_provider import QuelleNichtVerfuegbar
 
     class KaputteSitzung:
         def get(self, *args, **kwargs):
@@ -581,7 +590,9 @@ def test_google_fehler_liefert_nichts_statt_absturz():
     provider = GoogleProvider('schluessel')
     provider._sitzung = KaputteSitzung()
 
-    assert provider.fetch_by_id('PLACE_A001') is None
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_id('PLACE_A001')
+    assert gemeldet.value.endgueltig is False
 
 
 def test_google_leere_id_fragt_gar_nicht_erst():

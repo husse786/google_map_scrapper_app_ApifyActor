@@ -10,6 +10,8 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+import requests
+
 import mail
 import webapp
 from apify_client.errors import ApifyApiError
@@ -19,6 +21,7 @@ from apify_provider import (ENDGUELTIGE_FEHLER, NETZ_MELDUNG, ApifyProvider,
 from data_cleaner import OUTPUT_FILES
 from db import Datenbank
 from fake_provider import FakeProvider
+from google_provider import GoogleProvider
 from pipeline import MAX_FEHLSCHLAEGE_HINTEREINANDER, Lauf
 from place_provider import Candidate, QuelleNichtVerfuegbar
 from worker import Worker
@@ -425,18 +428,30 @@ def test_apify_fehler_wird_richtig_einsortiert():
 # K1: ein Fehler von Apify ist nie «nichts gefunden»
 # ============================================================================
 
-def apify_fehler(art: str = '', text: str = 'irgendwas') -> ApifyApiError:
+class ApifyFehlerFuerDenTest(ApifyApiError):
     """
-    Ein echter ApifyApiError, ohne den Konstruktor zu bemühen.
+    Ein echter ApifyApiError, ohne dessen Konstruktor zu bemühen.
 
     Der verlangt eine HTTP-Antwort; für die Einordnung zählen nur `type` und
-    `message`. Der Typ muss echt sein, weil `fetch_by_text` genau darauf fängt.
+    `message`. Der Typ muss echt bleiben, weil `fetch_by_text` genau darauf
+    fängt.
+
+    Warum eine Unterklasse und nicht `__new__` auf der Klasse selbst: seit
+    apify-client 3.1.1 hat `ApifyApiError.__new__` zwei Pflichtargumente, und
+    ein Aufruf ohne sie scheitert. Diese Fassung läuft in beiden Welten.
     """
-    fehler = ApifyApiError.__new__(ApifyApiError)
-    Exception.__init__(fehler, text)
-    fehler.type = art
-    fehler.message = text
-    return fehler
+
+    def __new__(cls, *args, **kwargs):
+        return Exception.__new__(cls)
+
+    def __init__(self, art: str = '', text: str = 'irgendwas'):
+        Exception.__init__(self, text)
+        self.type = art
+        self.message = text
+
+
+def apify_fehler(art: str = '', text: str = 'irgendwas') -> ApifyApiError:
+    return ApifyFehlerFuerDenTest(art, text)
 
 
 class UnbekannterApifyFehler:
@@ -609,6 +624,179 @@ def test_beschreibung_passt_zum_verhalten():
     # Die alte, falsche Aussage darf nicht zurückkommen.
     assert 'behandelt alle\n        drei Fälle gleich' not in text
     assert 'oder Apify einen Fehler meldet' not in text
+
+
+# ============================================================================
+# K2: Google sagt nur dann «gelöscht», wenn es das auch meint
+# ============================================================================
+
+class GoogleAntwort:
+    """Eine Antwort von Google, ohne Netz."""
+
+    def __init__(self, status: int, text: str = '{}', inhalt=None):
+        self.status_code = status
+        self.text = text
+        self._inhalt = inhalt if inhalt is not None else {}
+
+    def json(self):
+        return self._inhalt
+
+
+def google_mit(antwort=None, fehler=None) -> GoogleProvider:
+    class Sitzung:
+        def get(self, *args, **kwargs):
+            if fehler is not None:
+                raise fehler
+            return antwort
+
+    provider = GoogleProvider('schluessel')
+    provider._sitzung = Sitzung()
+    return provider
+
+
+def test_unbekannte_id_bleibt_ein_geloeschter_eintrag():
+    """404 ist eine Aussage über diesen Kunden — sie bleibt, wie sie war."""
+    provider = google_mit(GoogleAntwort(404, 'NOT_FOUND'))
+
+    assert provider.fetch_by_id('PLACE_WEG') is None
+
+
+def test_not_found_im_rumpf_zaehlt_auch():
+    """Manche Fehler kommen als 400 mit NOT_FOUND im Text."""
+    provider = google_mit(GoogleAntwort(400, '{"error":{"status":"NOT_FOUND"}}'))
+
+    assert provider.fetch_by_id('PLACE_WEG') is None
+
+
+def test_netzfehler_ist_kein_geloeschter_kunde():
+    """
+    Der Kern von K2.
+
+    Vorher hätte die Anwendung dem Sachbearbeiter gemeldet, sein Kunde sei bei
+    Google gelöscht worden — obwohl nur das Netz weg war. Er hätte einen
+    intakten Datensatz aus dem ERP genommen.
+    """
+    provider = google_mit(fehler=requests.RequestException('Netz weg'))
+
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_id('PLACE_A001')
+
+    assert gemeldet.value.endgueltig is False
+    assert 'nicht erreichbar' in gemeldet.value.meldung
+    assert 'Verbindung prüfen' in gemeldet.value.meldung
+    assert 'ß' not in gemeldet.value.meldung
+
+
+@pytest.mark.parametrize('status', [500, 502, 503, 504])
+def test_stoerung_bei_google_ist_voruebergehend(status):
+    provider = google_mit(GoogleAntwort(status, 'Internal error'))
+
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_id('PLACE_A001')
+
+    assert gemeldet.value.endgueltig is False
+    assert 'Störung' in gemeldet.value.meldung
+
+
+@pytest.mark.parametrize('status, stichwort', [
+    (401, 'GOOGLE_API_KEY'),
+    (403, 'Places API'),
+    (429, 'Kontingent'),
+])
+def test_schluessel_und_kontingent_stoppen_sofort(status, stichwort):
+    provider = google_mit(GoogleAntwort(status, 'abgelehnt'))
+
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_id('PLACE_A001')
+
+    assert gemeldet.value.endgueltig is True
+    assert stichwort in gemeldet.value.meldung
+    assert 'Bitte' in gemeldet.value.meldung
+    assert 'ß' not in gemeldet.value.meldung
+
+
+def test_unlesbare_antwort_ist_voruebergehend():
+    class KaputterInhalt(GoogleAntwort):
+        def json(self):
+            raise ValueError('kein JSON')
+
+    provider = google_mit(KaputterInhalt(200, 'nicht json'))
+
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_id('PLACE_A001')
+    assert gemeldet.value.endgueltig is False
+
+
+def test_leerer_datensatz_ist_kein_geloeschter_kunde():
+    provider = google_mit(GoogleAntwort(200, '{}', inhalt={}))
+
+    with pytest.raises(QuelleNichtVerfuegbar):
+        provider.fetch_by_id('PLACE_A001')
+
+
+def test_modus_b_stoppt_nach_zehn_netzfehlern(tmp_path):
+    """
+    Der Nachweis für K2 im ganzen Lauf.
+
+    Vorher wären alle Kunden mit «Eintrag gelöscht» in ③ gelandet. Jetzt endet
+    der Lauf nach zehn Fehlschlägen mit einer Erklärung, die stimmt.
+    """
+    zeilen = [{'placeId': f'PLACE_{i}', 'lat': '', 'lng': '',
+               'KundenNr': f'9{i:05d}'} for i in range(1, 101)]
+    eingabe = tmp_path / 'IDs.csv'
+    pd.DataFrame(zeilen).to_csv(eingabe, sep=';', index=False, encoding='utf-8-sig')
+
+    aufrufe = []
+
+    class OhneNetz:
+        def fetch_by_id(self, place_id):
+            aufrufe.append(place_id)
+            return google_mit(
+                fehler=requests.RequestException('Netz weg')).fetch_by_id(place_id)
+
+        def fetch_by_text(self, search_string, plz):
+            raise AssertionError('Im Modus B darf nicht gesucht werden.')
+
+    ziel = tmp_path / 'aus'
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(OhneNetz(), datenbank, modus='B', arbeiter=1).ausfuehren(
+            eingabe, str(ziel))
+        job = datenbank.job_lesen(ergebnis['job_id'])
+        kunden = datenbank.kunden_lesen(ergebnis['job_id'])
+
+    assert ergebnis['status'] == 'FEHLER'
+    assert 'nicht erreichbar' in job['fehlermeldung']
+    assert len(aufrufe) <= MAX_FEHLSCHLAEGE_HINTEREINANDER + 2
+    assert not ziel.exists()
+    # Und keiner der wenigen geschriebenen Kunden trägt eine falsche Begründung.
+    for kunde in kunden:
+        assert 'gelöscht' not in (kunde['grund'] or '')
+
+
+def test_geloeschte_id_bleibt_im_lauf_ein_ergebnis(tmp_path):
+    """Gegenprobe: eine wirklich unbekannte Id landet weiterhin in ③."""
+    eingabe = tmp_path / 'IDs.csv'
+    pd.DataFrame([{'placeId': 'PLACE_WEG', 'lat': '', 'lng': '',
+                   'KundenNr': '900001'}]).to_csv(
+        eingabe, sep=';', index=False, encoding='utf-8-sig')
+
+    class NichtMehrDa:
+        def fetch_by_id(self, place_id):
+            return google_mit(GoogleAntwort(404, 'NOT_FOUND')).fetch_by_id(place_id)
+
+        def fetch_by_text(self, search_string, plz):
+            raise AssertionError('Im Modus B darf nicht gesucht werden.')
+
+    ziel = tmp_path / 'aus'
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(NichtMehrDa(), datenbank, modus='B').ausfuehren(
+            eingabe, str(ziel))
+
+    assert ergebnis['status'] == 'FERTIG'
+    df = lies(ziel / OUTPUT_FILES['nicht_moeglich'])
+    assert len(df) == 1
+    assert df.iloc[0]['qualitaet'] == 'NICHT_MOEGLICH (ID ungueltig)'
+    assert 'gelöscht' in df.iloc[0]['grund']
 
 
 # ============================================================================
