@@ -232,7 +232,7 @@ button.quiet:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
       <span class="name">Nur Name und Adresse</span>
       <p>Wir suchen jeden Kunden auf Google Maps und entscheiden, welcher Treffer der richtige ist.</p>
       <span class="fmt mono">SearchString ; PLZ ; Stadt ; KundenNr</span>
-      <div class="meta">Rund 2 Stunden für 2'500 Kunden</div>
+      <div class="meta">Grosse Dateien laufen mehrere Stunden</div>
     </button>
 
     <button class="choice" onclick="go(2,'b')">
@@ -240,7 +240,7 @@ button.quiet:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
       <span class="name">Google-ID ist schon im ERP</span>
       <p>Wir holen die aktuellen Daten direkt über die gespeicherte ID. Kein Suchen, kein Raten.</p>
       <span class="fmt mono">placeId ; lat ; lng ; KundenNr</span>
-      <div class="meta">Rund 10 Minuten für 2'500 Kunden</div>
+      <div class="meta">Deutlich schneller als die Suche über Adressen</div>
     </button>
   </section>
 
@@ -284,7 +284,7 @@ button.quiet:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
   <section class="screen" id="s3">
     <h1>Läuft</h1>
     <div class="counter mono"><span id="cdone">0</span> <span>von 2'513 Kunden</span></div>
-    <div class="eta" id="ceta">Noch ungefähr 2 Stunden</div>
+    <div class="eta" id="ceta">Die verbleibende Zeit lässt sich noch nicht abschätzen.</div>
     <div class="bar"><i id="cbar"></i></div>
 
     <div class="buckets">
@@ -308,7 +308,7 @@ button.quiet:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
   <!-- ============ 4 ============ -->
   <section class="screen" id="s4">
     <h1>Fertig</h1>
-    <p class="lede">2'513 Kunden in 1 Stunde 54 Minuten. Drei Dateien liegen bereit.</p>
+    <p class="lede">2'513 Kunden verarbeitet. Drei Dateien liegen bereit.</p>
 
     <div class="files">
       <div class="file f">
@@ -420,8 +420,9 @@ function step(){
   document.getElementById('bx').textContent = swiss(75+c.x);
   document.getElementById('cbar').style.width = (shown/2513*100)+'%';
   const min = Math.max(1, Math.round((2513-shown)*0.045));
-  document.getElementById('ceta').textContent =
-    min>60 ? 'Noch ungefähr '+Math.round(min/60)+' Stunden' : 'Noch ungefähr '+min+' Minuten';
+  document.getElementById('ceta').textContent = n<3
+    ? 'Die verbleibende Zeit lässt sich noch nicht abschätzen.'
+    : (min>60 ? 'Noch ungefähr '+Math.round(min/60)+' Stunden' : 'Noch ungefähr '+min+' Minuten');
 }
 function swiss(x){ return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g,"’"); }
 </script>
