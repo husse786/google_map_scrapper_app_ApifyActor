@@ -71,14 +71,29 @@
   </div>
   {% endfor %}
 
-  <div class="knopfreihe">
-    {% if bericht.start_moeglich %}
-    <form method="post" action="/starten">
+  {% if bericht.start_moeglich %}
+  <form method="post" action="/starten" class="startform">
+    <label class="adressfeld" for="email">
+      <span class="feld-titel">Wohin sollen wir Bescheid geben?</span>
+      <span class="feld-unter">
+        Freiwillig. Der Lauf kann Stunden dauern — mit einer Adresse müssen Sie
+        nicht am Bildschirm warten. Ohne Adresse steht der Stand jederzeit auf
+        dieser Seite.
+      </span>
+      <input type="email" id="email" name="email" inputmode="email"
+             placeholder="vorname.name@firma.ch" value="{{ email or '' }}">
+    </label>
+
+    <div class="knopfreihe">
       <button class="knopf gross" type="submit" autofocus>Lauf starten</button>
-    </form>
-    {% endif %}
+      <a class="knopf leise" href="/datei?modus={{ modus }}">Andere Datei wählen</a>
+    </div>
+  </form>
+  {% else %}
+  <div class="knopfreihe">
     <a class="knopf leise" href="/datei?modus={{ modus }}">Andere Datei wählen</a>
   </div>
+  {% endif %}
 
   {% if not bericht.start_moeglich %}
   <p class="klein">

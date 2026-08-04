@@ -101,6 +101,27 @@ def candidate_aus_zeile(zeile) -> Candidate:
     return Candidate(**{feld.name: zeile[feld.name] for feld in fields(Candidate)})
 
 
+class QuelleNichtVerfuegbar(Exception):
+    """
+    Die Datenquelle kann nicht liefern — und zwar nicht nur für diesen Kunden.
+
+    Der Unterschied zu einem leeren Ergebnis ist wichtig: ein Kunde ohne
+    Treffer gehört nach ③. Ein erschöpftes Kontingent dagegen macht jeden
+    weiteren Kunden ebenfalls leer — dann sähe ein Lauf aus wie ein Ergebnis,
+    obwohl er keines ist. Solche Fälle beenden den Lauf mit `FEHLER`.
+
+    `meldung` ist für den Nutzer bestimmt: deutsch, mit Handlungsanweisung.
+    `endgueltig` heisst, dass Weitermachen nichts bringt (Kontingent, Token).
+    Ist es False, verträgt der Lauf einige Fehlschläge hintereinander, bevor
+    er aufgibt — ein kurzer Netzaussetzer soll keinen Lauf über Stunden töten.
+    """
+
+    def __init__(self, meldung: str, endgueltig: bool = True):
+        super().__init__(meldung)
+        self.meldung = meldung
+        self.endgueltig = endgueltig
+
+
 class PlaceProvider(Protocol):
     """Was eine Datenquelle können muss (02_DATENVERTRAG.md §7)."""
 

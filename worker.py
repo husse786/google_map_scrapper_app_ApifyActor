@@ -13,6 +13,7 @@ import logging
 import threading
 from pathlib import Path
 
+import mail
 from db import Datenbank
 from pipeline import STANDARD_ARBEITER, STANDARD_TIMEOUT_SEKUNDEN, Lauf
 
@@ -127,7 +128,24 @@ class Worker:
             self.fehler = fehler
             logger.exception(f'Job {job_id} ist gescheitert')
         finally:
+            self._bescheid_geben(datenbank, job_id)
             datenbank.schliessen()
+
+    def _bescheid_geben(self, datenbank: Datenbank, job_id: int) -> None:
+        """
+        Mail zum Ende des Laufs — bei FERTIG, ABGEBROCHEN und FEHLER.
+
+        Der Versand darf den Lauf unter keinen Umständen nachträglich kippen:
+        Was hier schiefgeht, landet im Protokoll und sonst nirgends.
+        """
+        try:
+            job = datenbank.job_lesen(job_id)
+            if not job or job['status'] not in mail.BETREFF_JE_STATUS:
+                return
+            dateien = (self.ergebnis or {}).get('dateien')
+            mail.sende_abschlussmail(job, dateien)
+        except Exception as fehler:
+            logger.error(f'Bescheid zu Job {job_id} nicht möglich: {fehler}')
 
     # ------------------------------------------------------------------
     # Abbrechen und warten

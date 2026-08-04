@@ -16,7 +16,7 @@ import threading
 from apify_client import ApifyClient
 from apify_client.errors import ApifyApiError
 
-from place_provider import Candidate
+from place_provider import Candidate, QuelleNichtVerfuegbar
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,43 @@ STANDARD_ACTOR_INPUT = {
     'scrapeTableReservationProvider': False,
     'skipClosedPlaces': False,
 }
+
+# Fehler, bei denen Weitermachen nichts bringt. Apify benennt sie in
+# `error.type`; der Text daneben ist das, was der Sachbearbeiter zu lesen
+# bekommt — mit einer Handlungsanweisung, nicht mit einer Fehlernummer.
+ENDGUELTIGE_FEHLER = {
+    'monthly-usage-hard-limit-exceeded':
+        'Das monatliche Guthaben bei Apify ist aufgebraucht. Der Lauf wurde '
+        'gestoppt, damit keine halben Ergebnisse entstehen. Bitte das Guthaben '
+        'aufstocken oder bis zum nächsten Abrechnungsmonat warten, dann den '
+        'Lauf fortsetzen.',
+    'usage-limit-exceeded':
+        'Das eingestellte Ausgabenlimit bei Apify ist erreicht. Der Lauf wurde '
+        'gestoppt. Bitte das Limit im Apify-Konto anheben, dann den Lauf '
+        'fortsetzen.',
+    'insufficient-permissions':
+        'Der Apify-Zugang hat nicht die nötigen Rechte. Bitte prüfen, ob der '
+        'Token noch gültig ist und zum richtigen Konto gehört.',
+    'token-not-provided':
+        'Es ist kein Apify-Token hinterlegt. Bitte den Eintrag '
+        'APIFY_API_TOKEN in der Datei .env prüfen.',
+    'invalid-token':
+        'Der Apify-Token wird nicht akzeptiert. Bitte den Eintrag '
+        'APIFY_API_TOKEN in der Datei .env prüfen und bei Bedarf im '
+        'Apify-Konto einen neuen erzeugen.',
+    'actor-not-found':
+        'Der eingestellte Apify-Actor ist nicht auffindbar. Bitte den Eintrag '
+        'ACTOR_ID in der Datei .env prüfen.',
+}
+
+# Wortfetzen für den Fall, dass Apify keinen Typ mitschickt.
+ENDGUELTIGE_WORTE = ('usage limit', 'hard limit', 'credit', 'quota',
+                     'unauthorized', 'invalid token', 'not authorized')
+
+NETZ_MELDUNG = (
+    'Apify ist nicht erreichbar. Meistens liegt es an der Internetverbindung '
+    'dieses Rechners. Bitte die Verbindung prüfen und den Lauf danach '
+    'fortsetzen — die bereits verarbeiteten Kunden bleiben erhalten.')
 
 # Apify-Feldname → Candidate-Feld. Diese Zuordnung ist der Grund, warum es
 # dieses Modul gibt. Kein anderes Modul kennt die linke Spalte.
@@ -143,10 +180,13 @@ class ApifyProvider:
             fertig = self.client.run(lauf_id).wait_for_finish(wait_secs=self.wartezeit)
         except ApifyApiError as fehler:
             logger.error(f'Apify meldet einen Fehler für "{search_string}": {fehler}')
+            _pruefen_ob_endgueltig(fehler)
             return []
+        except QuelleNichtVerfuegbar:
+            raise
         except Exception as fehler:
             logger.error(f'Unerwarteter Fehler bei "{search_string}": {fehler}')
-            return []
+            raise QuelleNichtVerfuegbar(NETZ_MELDUNG, endgueltig=False) from fehler
         finally:
             with self._sperre:
                 self._laufende.discard(lauf_id)
@@ -214,6 +254,22 @@ class ApifyProvider:
             logger.info(f'Apify-Lauf {lauf_id} abgebrochen.')
         except Exception as fehler:
             logger.warning(f'Apify-Lauf {lauf_id} liess sich nicht abbrechen: {fehler}')
+
+
+def _pruefen_ob_endgueltig(fehler: ApifyApiError) -> None:
+    """
+    Ist das ein Fehler, nach dem Weitermachen sinnlos ist?
+
+    Dann wird er weitergereicht und beendet den Lauf mit einer Erklärung.
+    Alles andere gilt als Fehlschlag bei diesem einen Kunden — er landet in ③.
+    """
+    art = str(getattr(fehler, 'type', '') or '')
+    if art in ENDGUELTIGE_FEHLER:
+        raise QuelleNichtVerfuegbar(ENDGUELTIGE_FEHLER[art])
+
+    text = str(getattr(fehler, 'message', '') or fehler).lower()
+    if any(wort in text for wort in ENDGUELTIGE_WORTE):
+        raise QuelleNichtVerfuegbar(ENDGUELTIGE_FEHLER['usage-limit-exceeded'])
 
 
 def aus_konfiguration(timeout_sekunden: int = STANDARD_TIMEOUT_SEKUNDEN) -> ApifyProvider:

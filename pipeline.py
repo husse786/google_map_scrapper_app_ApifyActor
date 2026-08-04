@@ -26,7 +26,8 @@ import pandas as pd
 from data_cleaner import (DataCleaner, ausgabeordner_fuer, leere_ablage,
                           schreibe_ausgabedateien)
 import modus_b
-from place_provider import candidate_aus_zeile, leere_ausgabezeile
+from place_provider import (QuelleNichtVerfuegbar, candidate_aus_zeile,
+                            leere_ausgabezeile)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,12 @@ STANDARD_ARBEITER = 6
 # Wie oft der Lauf beim Warten nachsieht, ob abgebrochen wurde. Bestimmt, wie
 # schnell der Abbruch greift (Abnahmekriterium: unter 5 Sekunden).
 TAKT_SEKUNDEN = 0.2
+
+# So viele Aufrufe hintereinander dürfen an der Datenquelle scheitern, bevor der
+# Lauf aufgibt. Ein kurzer Netzaussetzer soll einen Lauf über Stunden nicht
+# töten; fällt die Verbindung aber ganz aus, wären alle weiteren Kunden leer —
+# und ein Lauf voller ③ sähe aus wie ein Ergebnis, obwohl er keines ist.
+MAX_FEHLSCHLAEGE_HINTEREINANDER = 10
 
 # Pflichtspalten je Modus (02_DATENVERTRAG.md §1)
 PFLICHTSPALTEN = ('SearchString', 'PLZ', 'KundenNr')
@@ -86,6 +93,7 @@ class Lauf:
         if modus not in PFLICHTSPALTEN_JE_MODUS:
             raise ValueError(f'Unbekannter Modus "{modus}", erlaubt sind A und B.')
         self.modus = modus
+        self._fehlschlaege = 0
 
     # ------------------------------------------------------------------
     # Der Lauf
@@ -181,6 +189,17 @@ class Lauf:
                 'kunden_total': len(kunden), 'kunden_erledigt': erledigt,
                 'dateien': None, 'doppelte_kundennummern': self._doppelte,
             }
+        except QuelleNichtVerfuegbar as fehler:
+            # Kein Absturz: der Lauf endet mit einer Erklärung, die der
+            # Sachbearbeiter lesen und befolgen kann.
+            logger.error(f'Job {job_id} gestoppt: {fehler.meldung}')
+            self.datenbank.status_setzen(job_id, 'FEHLER', fehler.meldung)
+            return {
+                'job_id': job_id, 'status': 'FEHLER',
+                'kunden_total': len(kunden), 'kunden_erledigt': erledigt,
+                'dateien': None, 'doppelte_kundennummern': self._doppelte,
+                'fehlermeldung': fehler.meldung,
+            }
         except Exception as fehler:
             logger.exception('Lauf abgebrochen')
             self.datenbank.status_setzen(job_id, 'FEHLER', str(fehler))
@@ -258,7 +277,7 @@ class Lauf:
                         raise Abgebrochen()
                     kunden_nr, stamm = auftraege.pop(auftrag)
                     entscheidungen[kunden_nr] = self._einen_kunden(
-                        job_id, kunden_nr, stamm, auftrag.result())
+                        job_id, kunden_nr, stamm, self._ergebnis_von(auftrag))
                     erledigt += 1
                     # Nach jedem Kunden, nicht am Ende (02_DATENVERTRAG.md §6).
                     self.datenbank.fortschritt_setzen(job_id, erledigt)
@@ -268,6 +287,30 @@ class Lauf:
             arbeiter.shutdown(wait=False, cancel_futures=True)
 
         return erledigt
+
+    def _ergebnis_von(self, auftrag) -> list:
+        """
+        Holt das Ergebnis einer Abfrage und wacht über die Fehlschläge.
+
+        Ein endgültiger Fehler — Kontingent erschöpft, Token ungültig — beendet
+        den Lauf sofort. Ein vorübergehender wird gezählt: die ersten paar
+        gehen als leeres Ergebnis durch, aber wenn zehn hintereinander
+        scheitern, ist nicht ein Kunde das Problem, sondern die Verbindung.
+        """
+        try:
+            ergebnis = auftrag.result()
+        except QuelleNichtVerfuegbar as fehler:
+            if fehler.endgueltig:
+                raise
+            self._fehlschlaege += 1
+            if self._fehlschlaege >= MAX_FEHLSCHLAEGE_HINTEREINANDER:
+                raise QuelleNichtVerfuegbar(fehler.meldung) from fehler
+            logger.warning(f'Abfrage gescheitert ({self._fehlschlaege} '
+                           f'hintereinander): {fehler.meldung}')
+            return []
+
+        self._fehlschlaege = 0
+        return ergebnis
 
     # ------------------------------------------------------------------
     # Ein Kunde
@@ -398,6 +441,8 @@ class Lauf:
                     return auftrag.result(timeout=min(TAKT_SEKUNDEN, rest))
                 except FutureTimeout:
                     continue
+        except QuelleNichtVerfuegbar:
+            raise
         except Exception as fehler:
             logger.error(f'Datenquelle meldet einen Fehler für "{bezeichnung}": '
                          f'{fehler}')

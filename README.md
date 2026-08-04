@@ -1,223 +1,272 @@
-# Google Maps Scraper GUI
+# Kundendaten anreichern
 
-Dieses Projekt ist eine Desktop-Anwendung mit einer grafischen Benutzeroberfläche (GUI), um den Prozess des Extrahierens und Bereinigens von Unternehmensdaten aus Google Maps zu automatisieren. Die Anwendung nutzt die Apify-Plattform im Hintergrund, um gezielte und genaue Suchanfragen parallel auszuführen.
+Diese Anwendung nimmt eine Liste von ERP-Kunden, sucht jeden davon auf Google
+Maps und gibt drei Dateien zurück:
 
-## Überblick
+| Datei | Inhalt |
+|---|---|
+| `fertig_fuer_erp.csv` | eindeutig zugeordnet, kann direkt importiert werden |
+| `zur_pruefung.csv` | unklar — ein Mensch entscheidet. Der Grund steht in jeder Zeile |
+| `nicht_moeglich.csv` | nichts gefunden. Adresse im ERP prüfen, dann neu versuchen |
 
-Das System ist in zwei Haupt-Workflows unterteilt:
+Bedient wird sie im Browser. Wer sie benutzt, installiert nichts — er öffnet
+einen Link.
 
-1. **Anreicherung:** Lädt eine CSV-Datei, liest die Suchanfragen und ruft parallel Daten von der Apify API ab.
-2. **Bereinigung:** Wendet ein intelligentes, regelbasiertes Scoring-Modell an, um Duplikate und unplausible Ergebnisse aus den angereicherten Daten zu filtern.
+**Jede Zeile jeder Ausgabedatei trägt einen Score und einen deutschen
+Klartextgrund.** Niemand muss raten, warum ein Kunde dort gelandet ist, wo er
+gelandet ist. Und jeder Kunde aus der Eingabe steht in genau einer der drei
+Dateien — nie in zweien, nie in keiner.
 
-## Features
+---
 
-* **Parallele Verarbeitung:** Nutzt einen Thread-Pool (4 Worker), um mehrere API-Aufrufe gleichzeitig durchzuführen und den Anreicherungsprozess drastisch zu beschleunigen.
-* **Zweistufiger Workflow:** Klare Trennung der Benutzeroberfläche in "1. Anreichern" und "2. Bereinigen".
-* **Intelligente Datenbereinigung:** Ein fortschrittliches `DataCleaner`-Modul mit einem gewichteten Scoring-Modell, das zwischen Suchen mit und ohne Strassenangabe unterscheidet.
-* **Sichere Ergebnis-Filterung:** Stellt sicher, dass keine Kunden verloren gehen, indem unklare Fälle in eine separate Datei (`_zur_pruefung.csv`) zur manuellen Kontrolle verschoben werden.
-* **Dynamische Dateinamen:** Verhindert das Überschreiben von Ergebnissen, indem die Namen der Ausgabedateien auf dem Namen der Eingabedatei basieren.
-* **Asynchrone UI:** Die Benutzeroberfläche bleibt dank Threading während der gesamten Verarbeitungszeit reaktionsfähig und friert nicht ein.
-* **Detailliertes Logging:** Alle Aktionen werden in Echtzeit in die UI und parallel in eine Datei (`logs/app.log`) geschrieben.
+## Für den täglichen Gebrauch
 
-## Architektur-Überblick
+### Anwendung starten
 
-Die Anwendung folgt einem modularen Design, bei dem jede Datei eine klare Verantwortung hat:
-
-google-maps-scraper-app/
-│
-├── cli.py                \# Kommandozeile: Lauf und Bereinigung
-│
-├── webapp.py             \# Die Weboberfläche (FastAPI, Jinja2, HTMX)
-├── upload\_pruefung.py    \# Prüft die Eingabedatei, bevor der Lauf startet
-├── worker.py             \# Der Lauf im Hintergrund: starten, abbrechen, fortsetzen
-├── modus\_b.py           \# Auffrischen über die Google-ID: Prüfung statt Scoring
-├── google\_provider.py    \# Datenquelle Google Place Details (Modus B)
-├── pipeline.py           \# Ein Lauf: Eingabe → Provider → Datenbank → drei Dateien
-├── place\_provider.py     \# Candidate und die Provider-Schnittstelle
-├── apify\_provider.py     \# Datenquelle Apify — kennt als einziges Modul deren Felder
-├── fake\_provider.py      \# Datenquelle mit festen Antworten, für Tests ohne Kosten
-├── db.py                 \# SQLite: Jobs, Kunden, Kandidaten
-│
-├── csv\_processor.py      \# Liest und validiert die initiale CSV-Datei
-├── csv\_postprocessor.py  \# Filtert die Ergebnisse auf die gewünschten Spalten
-├── data\_cleaner.py       \# Bereinigt Duplikate mit dem Scoring-Modell
-│
-├── logger\_config.py      \# Konfiguriert das Logging-System
-└── config.py             \# Speichert Konfigurationen (API-Token, Spaltenlisten etc.)
-
-## Setup & Installation
-
-Diese Anleitung beschreibt, wie das Projekt von Grund auf eingerichtet wird.
-
-### Voraussetzungen
-
-* **Python 3.10+** ist auf dem System installiert.
-  * **Hinweis für macOS:** Es wird dringend empfohlen, Python von der offiziellen Webseite [python.org](https://www.python.org/downloads/macos/) zu installieren, um Kompatibilitätsprobleme mit der `Tkinter`-Bibliothek zu vermeiden.
-* Ein **Apify-Account** und der dazugehörige **API-Token**.
-
-### Schritt-für-Schritt-Einrichtung
-
-1. **Projekt klonen:** Klone dieses Repository auf deinen lokalen Computer:
-
-    ```bash
-    git clone [https://github.com/husse786/google_map_scrapper_app_ApifyActor.git](https://github.com/husse786/google_map_scrapper_app_ApifyActor.git)
-    cd google_map_scrapper_app_ApifyActor
-    ```
-
-2. **Projekt in VS Code öffnen:**
-    Öffne den soeben geklonten Projektordner in VS Code.
-
-3. **Virtuelle Umgebung erstellen und aktivieren:**
-    Eine "virtuelle Umgebung" isoliert die Projekt-Abhängigkeiten. Führe die folgenden Befehle im integrierten Terminal von VS Code aus.
-
-    * **Erstellen:**
-
-        ```bash
-        python3 -m venv venv
-        ```
-
-    * **Aktivieren (macOS/Linux):**
-
-        ```bash
-        source venv/bin/activate
-        ```
-
-    * **Aktivieren (Windows):**
-
-        ```bash
-        .\venv\Scripts\activate
-        ```
-
-4. **Notwendige Pakete installieren:**
-    Die Datei `requirements.txt` listet alle externen Python-Bibliotheken auf.
-
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-5. **Persönliche Konfiguration eintragen:**
-    Das Projekt benötigt deinen Apify API-Token und die Konfiguration der Bereinigungsregeln.
-    * Erstelle eine Kopie der Vorlagedatei `config.template.py` und nenne sie `config.py`.
-    * Öffne die neue `config.py` und trage deinen echten **`APIFY_API_TOKEN`** ein.
-    * Überprüfe die Listen (`FINAL_COLUMNS`) und Schwellenwerte (`DYNAMIC_THRESHOLD_GAP`) und passe sie bei Bedarf an.
-
-## Benutzung
-
-Stelle sicher, dass deine virtuelle Umgebung (`venv`) aktiv ist.
-
-> **Hinweis zum laufenden Umbau (Branch `umbau/webapp`):** Das Tkinter-Fenster
-> (`main.py`, `ui_manager.py`) ist entfallen und durch die Weboberfläche
-> ersetzt. Die Kommandozeile bleibt für Wartung und Fehlersuche.
-
-## Bedienung im Browser
+Im Terminal, im Projektordner:
 
 ```bash
+source venv/bin/activate
 python webapp.py
 ```
 
-Dann im Browser `http://localhost:8000` öffnen. Vier Seiten führen durch den
-Ablauf: Art wählen, Datei hochladen, Lauf beobachten, Ergebnis herunterladen.
+Dann im Browser `http://localhost:8000` öffnen. Beenden mit `Strg+C`.
 
-Zur Wahl stehen zwei Arten:
-
-* **Erstanreicherung** — nur Name und Adresse sind bekannt. Jeder Kunde wird
-  auf Google Maps gesucht, das Scoring entscheidet, welcher Treffer passt.
-  Spalten: `SearchString;PLZ;Stadt;KundenNr`
-* **Auffrischen** — die Google-ID steht schon im ERP. Die Daten werden direkt
-  über die ID geholt, ohne Suchen und ohne Raten. Geprüft wird nur, ob der
-  Betrieb noch offen ist und noch am selben Ort steht.
-  Spalten: `placeId;lat;lng;KundenNr` — `lat` und `lng` sind freiwillig.
-
-Das Fenster darf jederzeit geschlossen werden — der Lauf geht weiter. Wird das
-Programm mitten im Lauf beendet, bietet die Startseite beim nächsten Mal die
-Fortsetzung an; kein Kunde wird doppelt gesucht.
-
-Damit Kolleginnen und Kollegen im Firmennetz zugreifen können:
+Damit auch andere im Firmennetz zugreifen können:
 
 ```bash
 python webapp.py --offen
 ```
 
-Zum Üben ohne Apify-Kosten mit festen Antworten:
+Die Adresse lautet dann `http://<name-dieses-rechners>:8000`. Dieser Rechner
+muss laufen, solange jemand die Anwendung benutzt.
+
+### Der Ablauf, vier Seiten
+
+1. **Art wählen** — zwei Möglichkeiten:
+   * **Erstanreicherung**: Nur Name und Adresse sind bekannt. Jeder Kunde wird
+     auf Google Maps gesucht. Spalten: `SearchString;PLZ;Stadt;KundenNr`
+   * **Auffrischen**: Die Google-ID steht schon im ERP. Die Daten werden direkt
+     über die ID geholt. Spalten: `placeId;lat;lng;KundenNr` — `lat` und `lng`
+     sind freiwillig und dienen nur der Prüfung, ob der Betrieb noch am selben
+     Ort steht.
+2. **Datei hochladen** — die Anwendung prüft sie sofort und sagt, was auffällt:
+   fehlende Spalten, Zeilen ohne Strassennamen, Namen, die nur eine Branche
+   sind. Fehlt eine Pflichtspalte, geht es nicht weiter. Alle anderen Hinweise
+   sind nur Hinweise; Sie entscheiden, ob Sie trotzdem starten. Hier können Sie
+   auch eine Mailadresse hinterlegen.
+3. **Lauf** — Fortschritt, geschätzte Restzeit, Abbruch-Knopf. Das Fenster darf
+   geschlossen werden, der Lauf geht weiter.
+4. **Ergebnis** — die drei Dateien zum Herunterladen.
+
+### Wenn etwas dazwischenkommt
+
+* **Fenster geschlossen?** Der Lauf läuft weiter. Seite wieder öffnen, der
+  Stand ist da.
+* **Rechner neu gestartet, Strom weg, Programm beendet?** Beim nächsten Start
+  bietet die Startseite an, den Lauf fortzusetzen. Es wird kein Kunde doppelt
+  gesucht und keiner ausgelassen.
+* **Lauf abgebrochen?** Die bis dahin verarbeiteten Kunden sind gespeichert.
+  Ausgabedateien gibt es keine — ein halber Lauf ist kein Ergebnis.
+* **Mail hinterlegt?** Sie kommt in allen drei Fällen: fertig, abgebrochen,
+  gestoppt. Der Betreff nennt den Dateinamen und das Ergebnis.
+
+### Die CSV-Datei
+
+Semikolon als Trennzeichen, erste Zeile die Spaltennamen. In Excel:
+*Speichern unter → CSV UTF-8 (durch Trennzeichen getrennt)*.
+
+Höchstens 10'000 Zeilen pro Datei. Grössere Dateien bitte aufteilen.
+
+Die Kundennummer wird nie zur Suche verwendet. Sie wird unverändert
+mitgeführt, damit die Ergebnisse beim Import wieder zugeordnet werden können.
+
+---
+
+## Einrichtung auf einem neuen Rechner
+
+Einmalig, etwa zwanzig Minuten. Die Befehle werden im Terminal eingegeben
+(macOS: *Terminal*, Windows: *Eingabeaufforderung*), jeweils mit Enter
+bestätigt.
+
+### 1. Python installieren
+
+Nötig ist **Python 3.11 oder neuer**. Prüfen:
+
+```bash
+python3 --version
+```
+
+Kommt eine Fehlermeldung oder eine kleinere Zahl als 3.11, Python von
+[python.org](https://www.python.org/downloads/) herunterladen und installieren.
+
+### 2. Projekt holen
+
+```bash
+git clone https://github.com/husse786/google_map_scrapper_app_ApifyActor.git
+cd google_map_scrapper_app_ApifyActor
+```
+
+### 3. Virtuelle Umgebung anlegen
+
+Das ist ein eigener Ordner für die benötigten Zusatzprogramme, damit sie sich
+nicht mit anderen Projekten in die Quere kommen.
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+Unter Windows lautet die zweite Zeile `venv\Scripts\activate`.
+
+Vor der Eingabezeile steht danach `(venv)`. Das muss bei jedem neuen
+Terminalfenster erneut gemacht werden.
+
+### 4. Zusatzprogramme installieren
+
+```bash
+pip install -r requirements.txt
+```
+
+### 5. Zugangsdaten eintragen
+
+Zuerst die Vorlage kopieren:
+
+```bash
+cp config.template.py config.py
+```
+
+Dann eine Datei namens `.env` im Projektordner anlegen, mit diesem Inhalt:
+
+```
+APIFY_API_TOKEN=hier_den_token_einsetzen
+ACTOR_ID=hier_die_actor_id_einsetzen
+```
+
+Beides steht im Apify-Konto. **Diese Datei gehört niemandem sonst** — sie ist
+von der Versionsverwaltung ausgenommen und darf nicht weitergegeben werden.
+
+Freiwillig, je nach Bedarf:
+
+```
+GOOGLE_API_KEY=schluessel_fuer_das_auffrischen
+SMTP_SERVER=mail.firma.ch
+SMTP_ABSENDER=anreicherung@firma.ch
+SMTP_PORT=25
+SMTP_BENUTZER=
+SMTP_PASSWORT=
+```
+
+* **`GOOGLE_API_KEY`** braucht nur, wer die Art *Auffrischen* benutzt.
+* **SMTP** braucht nur, wer eine Mail bekommen will. Fehlt es, läuft alles
+  normal weiter; ins Protokoll wird geschrieben, was verschickt worden wäre.
+
+### 6. Ausprobieren, ohne etwas zu verbrauchen
+
+Die Anwendung kann mit vorbereiteten Antworten laufen. Dabei wird nichts bei
+Apify abgefragt und nichts abgerechnet:
 
 ```bash
 python webapp.py --antworten agent/testdaten/fixture_optimierte_daten.csv
 ```
 
-Für den Produktivlauf: `python webapp.py --quelle echt` — die Erstanreicherung
-läuft dann über Apify, das Auffrischen über Google Place Details. Für das
-Auffrischen braucht es einen `GOOGLE_API_KEY` in der Datei `.env`.
-
-## Bedienung über die Kommandozeile
-
-### Schritt 0: Die Datei vorher prüfen
-
-Ein Lauf über 2'500 Kunden dauert Stunden. Diese Prüfung sagt in Sekunden,
-was daran schiefgehen wird:
+Für den echten Betrieb:
 
 ```bash
-python cli.py pruefen Daten/DEINEDATEI.csv
+python webapp.py --quelle echt
 ```
 
-Gemeldet werden fehlende Spalten, Zeilen ohne Strassennamen im Strassenfeld
-(zum Beispiel eine Kostenstelle) und Zeilen, deren Name nur eine Branche ist
-(`Boucherie`, `Lebensmittelgeschäft`). Jede Meldung nennt die Anzahl und eine
-Beispielzeile mit ihrer Nummer, damit sie sich in Excel wiederfinden lässt.
+### 7. Wenn andere im Firmennetz zugreifen sollen
 
-Die beiden inhaltlichen Hinweise **blockieren nicht** — du entscheidest, ob du
-trotzdem läufst. Abgewiesen wird eine Datei mit einer fehlenden Pflichtspalte
-oder mit mehr als 10'000 Zeilen.
+`python webapp.py --offen` starten. Damit das funktioniert, muss Port 8000
+eingehend freigegeben sein. Das braucht Administratorrechte auf diesem Rechner;
+falls sie fehlen, genügt eine kurze Anfrage an die ICT.
 
-### Schritt 1: Anreichern und auswerten in einem Lauf
+Den Rechnernamen statt der IP-Adresse verwenden — sonst bricht der Link nach
+jedem Neustart.
 
-Die Eingabedatei braucht die Spalten `SearchString`, `PLZ`, `KundenNr`
-(`Stadt` ist freiwillig). Die Prüfung aus Schritt 0 läuft automatisch mit.
+---
+
+## Wenn etwas nicht klappt
+
+| Meldung oder Beobachtung | Was zu tun ist |
+|---|---|
+| «Das monatliche Guthaben bei Apify ist aufgebraucht» | Guthaben aufstocken oder bis zum nächsten Abrechnungsmonat warten. Der Lauf lässt sich danach fortsetzen, die verarbeiteten Kunden bleiben. |
+| «Der Apify-Token wird nicht akzeptiert» | Eintrag `APIFY_API_TOKEN` in `.env` prüfen, notfalls im Apify-Konto einen neuen erzeugen. |
+| «Apify ist nicht erreichbar» | Internetverbindung prüfen, dann fortsetzen. Ein kurzer Aussetzer stoppt den Lauf nicht; erst zehn Fehlschläge hintereinander tun es. |
+| «In der Datei fehlt die Spalte …» | Die erste Zeile der CSV muss die Spaltennamen enthalten, getrennt mit Semikolon. |
+| «Es liegt noch ein unerledigter Auftrag vor» | Es läuft immer nur ein Auftrag. Den offenen fortsetzen oder abbrechen. |
+| Die Seite lässt sich nicht öffnen | Läuft `python webapp.py` noch? Im Terminal nachsehen. |
+| Etwas anderes | `logs/webapp.log` und `logs/bereinigung.log` enthalten die technischen Einzelheiten. |
+
+---
+
+## Für die Wartung
+
+### Kommandozeile
+
+Dieselbe Fachlogik ohne Browser — für Wartung, Fehlersuche und lange Läufe:
 
 ```bash
-python cli.py lauf Daten/DEINEDATEI.csv --quelle apify
+python cli.py pruefen Daten/DEINEDATEI.csv           # nur prüfen
+python cli.py lauf Daten/DEINEDATEI.csv --quelle echt
+python cli.py lauf Daten/DEINEDATEI.csv --modus B --quelle echt
+python cli.py fortsetzen Daten/DEINEDATEI.csv --quelle echt
+python cli.py bereinigen Daten/ANGEREICHERT.csv      # nur den Cleaner
 ```
 
-Zum Üben oder Testen ohne Apify-Kosten: feste Antworten aus einer Datei
-verwenden. Das Format ist dasselbe wie bei einer angereicherten Datei.
+`Strg+C` bricht ab, ohne die verarbeiteten Kunden zu verlieren.
+
+### Tests
 
 ```bash
-python cli.py lauf Daten/DEINEDATEI.csv --antworten agent/testdaten/fixture_optimierte_daten.csv
+python -m pytest
 ```
 
-Sechs Abfragen laufen gleichzeitig. Der Fortschritt wird nach jedem Kunden
-gespeichert; jeder Lauf steht in `laeufe.sqlite`, mit jedem einzelnen Treffer,
-seinem Score und der Entscheidung darüber.
-
-**Abbrechen:** Strg+C. Der Lauf hält innerhalb von Sekunden an, die bereits
-verarbeiteten Kunden bleiben gespeichert.
-
-**Nach einem Absturz weitermachen** — Stromausfall, Neustart, zugeklapptes
-Notebook. Es wird kein Kunde doppelt abgefragt:
+Ein Test dauert drei Minuten und ist deshalb übersprungen. Ihn mitlaufen
+lassen:
 
 ```bash
-python cli.py fortsetzen Daten/DEINEDATEI.csv --quelle apify
+LANGSAME_TESTS=1 python -m pytest
 ```
 
-Solange ein Lauf unerledigt ist, weist ein zweiter Start ihn mit einem Hinweis
-ab. Es läuft immer nur ein Auftrag.
+### Aufbau
 
-### Schritt 2: Eine bereits angereicherte Datei auswerten
+```
+webapp.py             Weboberfläche (FastAPI, Jinja2, HTMX)
+cli.py                Kommandozeile
+upload_pruefung.py    Prüft die Eingabedatei, bevor der Lauf startet
+worker.py             Der Lauf im Hintergrund: starten, abbrechen, fortsetzen
+pipeline.py           Ein Lauf: Eingabe → Datenquelle → Datenbank → drei Dateien
+data_cleaner.py       Das Scoring: welcher Treffer ist der richtige (Modus A)
+modus_b.py            Auffrischen über die Google-ID: Prüfung statt Scoring
+place_provider.py     Candidate und die Schnittstelle zu den Datenquellen
+apify_provider.py     Datenquelle Apify — kennt als einziges Modul deren Felder
+google_provider.py    Datenquelle Google Place Details (Modus B)
+fake_provider.py      Datenquelle mit festen Antworten, für Tests ohne Kosten
+db.py                 SQLite: Jobs, Kunden, Kandidaten
+mail.py               Benachrichtigung am Ende eines Laufs
+config.py             Zugangsdaten (nicht in der Versionsverwaltung)
+```
 
-1. Bereinigung starten:
+Wo welche Daten liegen:
 
-    ```bash
-    python cli.py bereinigen Daten/DEINEDATEI_optimierte_daten.csv
-    ```
+```
+laufdaten/uploads/        hochgeladene Dateien und ihre Ergebnisordner
+laufdaten/laeufe.sqlite   alle Läufe, Kunden und Kandidaten
+logs/                     Protokolle
+```
 
-2. Neben der Eingabedatei entsteht ein Ordner `DEINEDATEI_optimierte_daten_ergebnis`
-    mit vier Dateien. Ein anderer Zielordner geht mit `--ausgabe ORDNER`.
-    * **`fertig_fuer_erp.csv`:** automatisch akzeptiert, direkt importierbar.
-    * **`zur_pruefung.csv`:** unklare Fälle, ein Mensch entscheidet.
-    * **`nicht_moeglich.csv`:** kein verwertbares Ergebnis.
-    * **`aussortiert.csv`:** verworfene Kandidaten, nur zur Nachschau.
-3. Jede Zeile der drei Hauptdateien trägt `qualitaet`, `score` und einen
-    deutschen Klartextgrund. Jeder Kunde steht in genau einer der drei Dateien.
+Beides ist von der Versionsverwaltung ausgenommen: dort stehen echte
+Kundendaten.
 
-## Anhang: Detaillierte Logik des Datenbereinigungs-Moduls
+### Wie entschieden wird
 
-Weitere Informationen zur Funktionsweise des `DataCleaner`-Moduls und der angewendeten Logik findest du in der [Data-Cleansing Dokumentation](docs/concepts_&_docs/DataCleansing/data_cleansing.md).
+Die Fachlogik, die Schwellenwerte und ihre Begründungen stehen in `agent/`:
+
+* `02_DATENVERTRAG.md` — Spalten, Zustände, Datenbankschema
+* `03_ENTSCHEIDUNGEN.md` — feste Werte: Schwellen, Timeouts, Grenzen
+* `agent/findings/` — was in jeder Ausbaustufe gemessen und gefunden wurde
+
+Diese Dateien sind verbindlich. Wer eine Schwelle ändern will, ändert sie
+zuerst dort.

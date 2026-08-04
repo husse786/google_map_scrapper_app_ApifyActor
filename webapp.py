@@ -53,6 +53,7 @@ zustand = {
     'worker': None,       # der laufende Worker
     'hochgeladen': None,  # Pfad der zuletzt geprüften Datei
     'modus': 'A',         # A = Erstanreicherung, B = Auffrischen über die Id
+    'email': '',          # Adresse für die Benachrichtigung, freiwillig
     'kunden': 0,          # Kundenzahl aus der Prüfung, für die erste Anzeige
     'provider': None,     # wird beim Start gesetzt
     # Nur der echte Serverbetrieb beendet den Prozess hart (s. beim_beenden).
@@ -160,15 +161,15 @@ def stand_lesen(job_id: int) -> dict:
 
     ueberschriften = {
         'LAEUFT': 'Läuft', 'FERTIG': 'Fertig',
-        'ABGEBROCHEN': 'Abgebrochen', 'FEHLER': 'Abgebrochen',
+        'ABGEBROCHEN': 'Abgebrochen', 'FEHLER': 'Gestoppt',
         'NEU': 'Bereit', 'VALIDIERT': 'Bereit',
     }
     abschluss = {
         'FERTIG': 'Der Lauf ist durch. Die drei Dateien liegen bereit.',
         'ABGEBROCHEN': 'Der Lauf wurde gestoppt. Die bereits verarbeiteten '
                        'Kunden sind gespeichert.',
-        'FEHLER': 'Der Lauf musste abbrechen. Die bereits verarbeiteten Kunden '
-                  'sind gespeichert.',
+        'FEHLER': 'Der Lauf musste gestoppt werden. Die bereits verarbeiteten '
+                  'Kunden sind gespeichert.',
     }
 
     return {
@@ -185,6 +186,8 @@ def stand_lesen(job_id: int) -> dict:
         'pruefung_anzahl': gezaehlt['pruefung'],
         'nicht_moeglich_anzahl': gezaehlt['nicht_moeglich'],
         'zuletzt': (zuletzt or {}).get('search_string') or '',
+        'email': job['email'] or '',
+        'fehlermeldung': job['fehlermeldung'] or '',
     }
 
 
@@ -230,7 +233,8 @@ def datei_formular(request: Request, modus: str = 'A'):
                            'Bitte auf der Startseite eine der beiden Arten wählen.')
     zustand['hochgeladen'] = None
     zustand['modus'] = modus
-    return seite(request, 'datei.html', 'datei', bericht=None, modus=modus)
+    return seite(request, 'datei.html', 'datei', bericht=None, modus=modus,
+                 email=zustand['email'])
 
 
 @app.post('/datei', response_class=HTMLResponse)
@@ -264,7 +268,8 @@ async def datei_hochladen(request: Request, datei: UploadFile = None,
     zustand['hochgeladen'] = ziel if bericht.start_moeglich else None
     zustand['kunden'] = bericht.kunden
     zustand['modus'] = modus
-    return seite(request, 'datei.html', 'datei', bericht=bericht, modus=modus)
+    return seite(request, 'datei.html', 'datei', bericht=bericht, modus=modus,
+                 email=zustand['email'])
 
 
 # ==========================================================================
@@ -272,7 +277,8 @@ async def datei_hochladen(request: Request, datei: UploadFile = None,
 # ==========================================================================
 
 @app.post('/starten')
-def lauf_starten(request: Request):
+def lauf_starten(request: Request, email: str = Form('')):
+    zustand['email'] = (email or '').strip()
     quelle = zustand['hochgeladen']
     if not quelle or not Path(quelle).exists():
         return fehlerseite(request, 'Die Datei ist nicht mehr da',
@@ -281,7 +287,7 @@ def lauf_starten(request: Request):
     worker = Worker(provider_holen(zustand['modus']), DATENBANK,
                     modus=zustand['modus'])
     try:
-        job_id = worker.starten(quelle, email=None,
+        job_id = worker.starten(quelle, email=zustand['email'] or None,
                                 kunden_total=zustand['kunden'])
     except LaeuftBereits as hinweis:
         return fehlerseite(request, 'Es läuft bereits ein Auftrag', str(hinweis),
@@ -330,7 +336,8 @@ def lauf_zeigen(request: Request, job_id: int):
         return fehlerseite(request, 'Diesen Auftrag gibt es nicht',
                            f'Ein Auftrag mit der Nummer {job_id} ist nicht '
                            f'gespeichert.', code=404)
-    return seite(request, 'lauf.html', 'lauf', job_id=job_id, stand=stand)
+    return seite(request, 'lauf.html', 'lauf', job_id=job_id, stand=stand,
+                 email=stand['email'])
 
 
 @app.get('/lauf/{job_id}/stand', response_class=HTMLResponse)
@@ -386,9 +393,15 @@ def ergebnis_zeigen(request: Request, job_id: int):
             f'unvollständig, deshalb gibt es keine Dateien zum Herunterladen. '
             f'Die verarbeiteten Kunden sind gespeichert.')
     elif job['status'] == 'FEHLER':
-        ueberschrift = 'Abgebrochen'
-        zusammenfassung = ('Der Lauf musste abbrechen. Es gibt keine Dateien '
-                           'zum Herunterladen.')
+        ueberschrift = 'Gestoppt'
+        # Die Erklärung der Datenquelle steht im Job und ist für den
+        # Sachbearbeiter geschrieben — sie gehört auf die Seite, nicht ins Log.
+        zusammenfassung = (job['fehlermeldung'] or
+                           'Der Lauf musste gestoppt werden.')
+        zusammenfassung += (
+            f' {zahl(job["kunden_erledigt"])} von {zahl(job["kunden_total"])} '
+            f'Kunden waren fertig und sind gespeichert. Wenn die Ursache '
+            f'behoben ist, bietet die Startseite an, den Lauf fortzusetzen.')
     else:
         return RedirectResponse(f'/lauf/{job_id}', status_code=303)
 

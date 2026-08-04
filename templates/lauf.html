@@ -6,7 +6,12 @@
 
   <p class="klein ruhe">
     Sie können dieses Fenster schliessen — der Lauf geht weiter.
+    {% if email %}
+    Wir schicken eine Mail an {{ email }}, sobald er fertig ist oder etwas
+    schiefgeht.
+    {% else %}
     Öffnen Sie die Seite später wieder, um den Stand zu sehen.
+    {% endif %}
   </p>
 
   {% if not stand.fertig %}

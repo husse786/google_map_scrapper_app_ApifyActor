@@ -149,6 +149,16 @@ button.kachel:hover { border-color: var(--akzent); }
   padding: 0.1rem 0.35rem; border-radius: 4px; overflow-wrap: anywhere;
 }
 
+.startform { margin-top: 1.5rem; }
+.adressfeld {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  border: 1px solid var(--linie); border-radius: 10px; padding: 1.25rem;
+}
+.adressfeld input {
+  font: inherit; margin-top: 0.6rem; padding: 0.55rem 0.7rem;
+  border: 1px solid var(--linie); border-radius: 8px; max-width: 24rem;
+}
+
 /* --- Lauf --- */
 .zaehler { font-size: 1.15rem; margin: 0.75rem 0 0.5rem; }
 .zaehler strong { font-size: 2rem; }
