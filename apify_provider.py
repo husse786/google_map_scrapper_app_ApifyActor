@@ -4,7 +4,8 @@
 # Nachfolger von apify_wrapper.py. Neu gegenüber dem alten Wrapper:
 #   - Timeout pro Aufruf, 180 Sekunden (03_ENTSCHEIDUNGEN.md C)
 #   - ein hängender oder abgebrochener Lauf wird wie ein leeres Ergebnis
-#     behandelt: kein Retry, der Kunde landet in Datei ③
+#     behandelt: kein Retry, der Kunde landet in Datei ③. Ein Fehler von Apify
+#     dagegen ist kein Ergebnis und beendet den Lauf mit einer Erklärung
 #   - der Lauf wird bei Zeitüberschreitung auf Apify wirklich abgebrochen,
 #     damit er kein Kontingent weiterverbraucht
 #   - Rückgabe sind Candidate-Objekte, keine Apify-Dictionaries
@@ -93,6 +94,17 @@ NETZ_MELDUNG = (
     'dieses Rechners. Bitte die Verbindung prüfen und den Lauf danach '
     'fortsetzen — die bereits verarbeiteten Kunden bleiben erhalten.')
 
+# Für Fehler, die Apify meldet, ohne dass wir sie einordnen können. Auch sie
+# sind kein leeres Ergebnis: die Frage wurde nicht beantwortet. Was Apify genau
+# geschrieben hat, steht im Protokoll — hier steht nur, was zu tun ist.
+UNBEKANNTE_MELDUNG = (
+    'Apify hat die Anfragen mehrfach hintereinander mit einem Fehler '
+    'beantwortet, den wir nicht einordnen können. Der Lauf wurde gestoppt, '
+    'damit keine Kunden fälschlich als «nichts gefunden» gelten. Bitte es '
+    'später noch einmal versuchen und den Lauf fortsetzen — die bereits '
+    'verarbeiteten Kunden bleiben erhalten. Was Apify gemeldet hat, steht im '
+    'Protokoll im Ordner logs.')
+
 # Apify-Feldname → Candidate-Feld. Diese Zuordnung ist der Grund, warum es
 # dieses Modul gibt. Kein anderes Modul kennt die linke Spalte.
 FELD_ZUORDNUNG = {
@@ -145,9 +157,18 @@ class ApifyProvider:
         """
         Sucht nach einem Text und liefert die Treffer als Candidate.
 
-        Liefert eine leere Liste, wenn nichts gefunden wurde, der Aufruf in den
-        Timeout lief oder Apify einen Fehler meldet. Der Aufrufer behandelt alle
-        drei Fälle gleich: der Kunde landet in Datei ③ (03_ENTSCHEIDUNGEN.md C).
+        **Eine leere Liste heisst: nichts gefunden.** Das ist ein Ergebnis, und
+        der Kunde landet damit in Datei ③ (03_ENTSCHEIDUNGEN.md C). Denselben
+        Weg nimmt ein Aufruf, der in den Timeout gelaufen ist oder den Apify
+        nicht erfolgreich beendet hat — auch dort steht am Ende kein Treffer.
+
+        **Ein Fehler von Apify ist dagegen kein Ergebnis** und kommt als
+        `QuelleNichtVerfuegbar` heraus, nicht als leere Liste. Die Frage wurde
+        nicht beantwortet; sie stillschweigend als «nichts gefunden» zu
+        behandeln, würde einen ganzen Lauf in Datei ③ schreiben und ihn
+        trotzdem `FERTIG` nennen. Bekannte Arten — Kontingent, Token, Rechte —
+        stoppen den Lauf sofort, alle anderen erst nach zehn Fehlschlägen
+        hintereinander.
         """
         if not self.actor:
             logger.error('Apify-Client ist nicht einsatzbereit, Aufruf übersprungen.')
@@ -180,8 +201,13 @@ class ApifyProvider:
             fertig = self.client.run(lauf_id).wait_for_finish(wait_secs=self.wartezeit)
         except ApifyApiError as fehler:
             logger.error(f'Apify meldet einen Fehler für "{search_string}": {fehler}')
+            # Ein Fehler von Apify ist nie «nichts gefunden» — die Frage wurde
+            # gar nicht beantwortet. Bekannte Arten stoppen den Lauf sofort,
+            # unbekannte nach zehn hintereinander. Ein einzelner Ausrutscher
+            # kostet weiterhin nur diesen einen Kunden.
             _pruefen_ob_endgueltig(fehler)
-            return []
+            raise QuelleNichtVerfuegbar(UNBEKANNTE_MELDUNG,
+                                        endgueltig=False) from fehler
         except QuelleNichtVerfuegbar:
             raise
         except Exception as fehler:
