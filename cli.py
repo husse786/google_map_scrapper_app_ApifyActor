@@ -11,10 +11,13 @@
 #   python cli.py lauf <eingabe.csv> --antworten <datei.csv>
 #       reichert an und wertet aus, mit festen Antworten statt Apify
 #
-#   python cli.py lauf <eingabe.csv> --quelle apify
+#   python cli.py lauf <eingabe.csv> --quelle echt
 #       dasselbe über Apify. Kostet Kontingent.
 #
-#   python cli.py fortsetzen <eingabe.csv> --quelle apify
+#   python cli.py lauf <eingabe.csv> --modus B --quelle echt
+#       Auffrischen über die gespeicherte Google-Id
+#
+#   python cli.py fortsetzen <eingabe.csv> --quelle echt
 #       nimmt einen Lauf wieder auf, der abgestürzt ist
 #
 # Der Lauf arbeitet im Hintergrund. Strg+C bricht ihn ab, ohne die bisher
@@ -34,7 +37,7 @@ import pandas as pd
 from data_cleaner import DataCleaner
 from fake_provider import FakeProvider
 from pipeline import STANDARD_ARBEITER, STANDARD_TIMEOUT_SEKUNDEN
-from upload_pruefung import pruefe_datei
+from upload_pruefung import KOPFZEILE_JE_MODUS, pruefe_datei
 from worker import LaeuftBereits, Worker, offener_lauf
 
 LOG_DIR = Path(__file__).resolve().parent / 'logs'
@@ -157,7 +160,7 @@ def pruefen(args) -> int:
         print(f'Die Datei "{args.eingabe}" gibt es nicht. Bitte den Pfad prüfen.')
         return 1
     try:
-        bericht = pruefe_datei(args.eingabe)
+        bericht = pruefe_datei(args.eingabe, modus=getattr(args, 'modus', 'A'))
     except Exception:
         logging.getLogger(__name__).exception('Prüfung abgebrochen')
         print(f'Die Datei "{args.eingabe.name}" konnte nicht gelesen werden.')
@@ -178,12 +181,14 @@ def fortsetzen(args) -> int:
 
 def _lauf_oder_fortsetzen(args, fortsetzen: bool) -> int:
     eingabe: Path = args.eingabe
-    df = _eingabe_pruefen(eingabe, ('SearchString', 'PLZ', 'KundenNr'))
+    pflicht = ('placeId', 'KundenNr') if args.modus == 'B' \
+        else ('SearchString', 'PLZ', 'KundenNr')
+    df = _eingabe_pruefen(eingabe, pflicht)
     if df is None:
         return 1
 
-    # Vor dem Zweistundenlauf: was wird an dieser Datei schiefgehen?
-    bericht = pruefe_datei(eingabe)
+    # Vor dem langen Lauf: was wird an dieser Datei schiefgehen?
+    bericht = pruefe_datei(eingabe, modus=args.modus)
     if bericht.hinweise or not bericht.start_moeglich:
         for hinweis in bericht.befunde:
             print()
@@ -200,7 +205,7 @@ def _lauf_oder_fortsetzen(args, fortsetzen: bool) -> int:
         return 1
 
     worker = Worker(provider, args.datenbank, timeout_sekunden=args.timeout,
-                    arbeiter=args.arbeiter)
+                    arbeiter=args.arbeiter, modus=args.modus)
 
     if fortsetzen:
         offen = offener_lauf(args.datenbank)
@@ -219,7 +224,8 @@ def _lauf_oder_fortsetzen(args, fortsetzen: bool) -> int:
         kunden_eingabe = df['KundenNr'].nunique()
         print(f'Datei:  {eingabe.name}')
         print(f'Kunden: {_zahl(kunden_eingabe)} ({_zahl(len(df))} Zeilen)')
-        print(f'Quelle: {"Apify" if args.quelle == "apify" else "feste Antworten"}')
+        print(f'Modus:  {"Auffrischen über die Google-Id" if args.modus == "B" else "Erstanreicherung"}')
+        print(f'Quelle: {_quelle_in_worten(args)}')
         print(f'Es arbeiten {args.arbeiter} Abfragen gleichzeitig. '
               f'Abbrechen mit Strg+C.')
         try:
@@ -275,14 +281,23 @@ def _auf_lauf_warten(worker: Worker, job_id: int, args) -> int:
     return code
 
 
+def _quelle_in_worten(args) -> str:
+    if args.quelle != 'echt':
+        return 'feste Antworten'
+    return 'Google Place Details' if args.modus == 'B' else 'Apify'
+
+
 def _provider_bauen(args):
-    if args.quelle == 'apify':
+    if args.quelle == 'echt':
+        if args.modus == 'B':
+            import google_provider
+            return google_provider.aus_konfiguration(timeout_sekunden=args.timeout)
         import apify_provider
         return apify_provider.aus_konfiguration(timeout_sekunden=args.timeout)
 
     if not args.antworten:
         raise ValueError('Für feste Antworten fehlt die Angabe --antworten '
-                         '<datei.csv>. Alternativ --quelle apify verwenden.')
+                         '<datei.csv>. Alternativ --quelle echt verwenden.')
     if not Path(args.antworten).exists():
         raise ValueError(f'Die Antwortdatei "{args.antworten}" gibt es nicht.')
     return FakeProvider.aus_csv(str(args.antworten))
@@ -310,12 +325,18 @@ def main(argv=None) -> int:
 
     p = befehle.add_parser('pruefen', parents=[gemeinsam],
                            help='eine Eingabedatei prüfen, ohne sie zu starten')
+    p.add_argument('--modus', choices=('A', 'B'), default='A',
+                   help='A = Erstanreicherung, B = Auffrischen über die Google-Id')
     p.set_defaults(funktion=pruefen)
 
     lauf_optionen = argparse.ArgumentParser(add_help=False)
-    lauf_optionen.add_argument('--quelle', choices=('fake', 'apify'), default='fake',
-                               help='woher die Treffer kommen '
+    lauf_optionen.add_argument('--quelle', choices=('fake', 'echt'), default='fake',
+                               help='woher die Treffer kommen: «echt» nutzt '
+                                    'Apify beziehungsweise Google '
                                     '(Standard: feste Antworten)')
+    lauf_optionen.add_argument('--modus', choices=('A', 'B'), default='A',
+                               help='A = Erstanreicherung über den Suchbegriff, '
+                                    'B = Auffrischen über die Google-Id')
     lauf_optionen.add_argument('--antworten', type=Path, default=None,
                                help='Antwortdatei für --quelle fake')
     lauf_optionen.add_argument('--datenbank', type=Path, default=STANDARD_DATENBANK,

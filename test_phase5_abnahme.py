@@ -336,9 +336,9 @@ def sichtbarer_text(html: str) -> str:
 
 def test_keine_englischen_woerter_in_der_oberflaeche(browser):
     job_id = lauf_durchfuehren(browser)
-    seiten = ['/', '/datei?modus=A', f'/lauf/{job_id}', f'/lauf/{job_id}/stand',
-              f'/ergebnis/{job_id}', '/datei?modus=B', '/lauf/99999',
-              '/ergebnis/99999']
+    seiten = ['/', '/datei?modus=A', '/datei?modus=B', f'/lauf/{job_id}',
+              f'/lauf/{job_id}/stand', f'/ergebnis/{job_id}', '/datei?modus=X',
+              '/lauf/99999', '/ergebnis/99999']
 
     for pfad in seiten:
         text = sichtbarer_text(browser.get(pfad).text)
@@ -374,9 +374,17 @@ def test_ohne_datei_kein_absturz(browser):
     assert 'hochladen' in antwort.text
 
 
-def test_modus_b_sagt_dass_er_noch_fehlt(browser):
+def test_modus_b_ist_erreichbar(browser):
+    """Seit Phase 6 gebaut: das Auffrischen über die Google-Id."""
     antwort = browser.get('/datei', params={'modus': 'B'})
-    assert 'noch nicht verfügbar' in antwort.text
+    assert antwort.status_code == 200
+    assert 'placeId' in antwort.text
+    assert 'Traceback' not in antwort.text
+
+
+def test_unbekannte_art_wird_verstaendlich_gemeldet(browser):
+    antwort = browser.get('/datei', params={'modus': 'X'})
+    assert 'Diese Art gibt es nicht' in antwort.text
     assert 'Traceback' not in antwort.text
 
 

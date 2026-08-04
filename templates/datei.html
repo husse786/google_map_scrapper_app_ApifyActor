@@ -10,6 +10,7 @@
      liegt er unsichtbar hinter einer eigenen Beschriftung. Bedienung und
      Tastaturzugang bleiben die des echten Feldes. #}
   <form method="post" action="/datei" enctype="multipart/form-data" class="hochladen">
+    <input type="hidden" name="modus" value="{{ modus }}">
     <div class="feld">
       <span class="feld-titel">CSV-Datei auswählen</span>
       <span class="feld-unter">Trennzeichen Semikolon</span>
@@ -33,9 +34,15 @@
   </script>
 
   <p class="klein">
+    {% if modus == 'B' %}
+    <strong>Erwartet werden die Spalten placeId und KundenNr.</strong>
+    Die Angaben <em>lat</em> und <em>lng</em> sind freiwillig; stehen sie in der
+    Datei, prüfen wir zusätzlich, ob der Betrieb noch am selben Ort ist.
+    {% else %}
     <strong>Die Kundennummer wird nicht für die Suche verwendet.</strong>
     Google kennt Ihre Kundennummern nicht. Sie werden unverändert mitgeführt,
     damit Sie die Ergebnisse beim Import ins ERP wieder zuordnen können.
+    {% endif %}
   </p>
   {% endif %}
 
@@ -70,7 +77,7 @@
       <button class="knopf gross" type="submit" autofocus>Lauf starten</button>
     </form>
     {% endif %}
-    <a class="knopf leise" href="/datei?modus=A">Andere Datei wählen</a>
+    <a class="knopf leise" href="/datei?modus={{ modus }}">Andere Datei wählen</a>
   </div>
 
   {% if not bericht.start_moeglich %}

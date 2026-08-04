@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request, UploadFile
+from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -52,6 +52,7 @@ vorlagen.env.globals['zahl'] = zahl
 zustand = {
     'worker': None,       # der laufende Worker
     'hochgeladen': None,  # Pfad der zuletzt geprüften Datei
+    'modus': 'A',         # A = Erstanreicherung, B = Auffrischen über die Id
     'kunden': 0,          # Kundenzahl aus der Prüfung, für die erste Anzeige
     'provider': None,     # wird beim Start gesetzt
     # Nur der echte Serverbetrieb beendet den Prozess hart (s. beim_beenden).
@@ -59,15 +60,31 @@ zustand = {
     'harter_stopp': False,
 }
 
-# Beschriftungen der drei Ausgabedateien (02_DATENVERTRAG.md §2)
-AUSGABEN = [
-    ('fertig_fuer_erp', 'Fertig fürs ERP', 'Kann direkt importiert werden.', 'fertig'),
-    ('zur_pruefung', 'Zur Prüfung',
-     'Mehrere mögliche Treffer — Sie entscheiden. Der Grund steht in jeder Zeile.',
-     'pruefung'),
-    ('nicht_moeglich', 'Nicht möglich',
-     'Nichts gefunden. Adresse im ERP prüfen, dann neu versuchen.', 'nicht_moeglich'),
-]
+# Beschriftungen der drei Ausgabedateien (02_DATENVERTRAG.md §2).
+# Die Prüf- und Fehlerfälle entstehen in den beiden Modi aus verschiedenen
+# Gründen — der Text sagt deshalb je Modus etwas anderes.
+AUSGABEN = {
+    'A': [
+        ('fertig_fuer_erp', 'Fertig fürs ERP',
+         'Kann direkt importiert werden.', 'fertig'),
+        ('zur_pruefung', 'Zur Prüfung',
+         'Mehrere mögliche Treffer — Sie entscheiden. Der Grund steht in '
+         'jeder Zeile.', 'pruefung'),
+        ('nicht_moeglich', 'Nicht möglich',
+         'Nichts gefunden. Adresse im ERP prüfen, dann neu versuchen.',
+         'nicht_moeglich'),
+    ],
+    'B': [
+        ('fertig_fuer_erp', 'Fertig fürs ERP',
+         'Über die gespeicherte Google-ID aufgefrischt.', 'fertig'),
+        ('zur_pruefung', 'Zur Prüfung',
+         'Der Betrieb ist geschlossen oder steht nicht mehr am gespeicherten '
+         'Ort. Der Grund steht in jeder Zeile.', 'pruefung'),
+        ('nicht_moeglich', 'Nicht möglich',
+         'Zur gespeicherten Google-ID gibt es keinen Eintrag mehr.',
+         'nicht_moeglich'),
+    ],
+}
 
 
 # ==========================================================================
@@ -171,16 +188,22 @@ def stand_lesen(job_id: int) -> dict:
     }
 
 
-def provider_holen():
+def provider_holen(modus: str = 'A'):
     """
-    Die Datenquelle. Ohne Apify-Zugang die festen Antworten aus einer Datei.
+    Die Datenquelle für den gewählten Modus.
 
-    Damit lässt sich die Oberfläche vollständig bedienen, ohne Kontingent zu
-    verbrauchen — und ohne Netz.
+    Modus A sucht über Apify, Modus B holt direkt über die Google-Id. Ist eine
+    feste Antwortdatei eingerichtet, gilt sie für beide Modi — damit lässt sich
+    die Oberfläche vollständig bedienen, ohne Kontingent zu verbrauchen und
+    ohne Netz.
     """
     if zustand['provider'] is not None:
         return zustand['provider']
-    return None
+    if modus == 'B':
+        import google_provider
+        return google_provider.aus_konfiguration()
+    import apify_provider
+    return apify_provider.aus_konfiguration()
 
 
 # ==========================================================================
@@ -202,17 +225,20 @@ def art_waehlen(request: Request):
 
 @app.get('/datei', response_class=HTMLResponse)
 def datei_formular(request: Request, modus: str = 'A'):
-    if modus != 'A':
-        return fehlerseite(
-            request, 'Diese Art ist noch nicht verfügbar',
-            'Das Auffrischen über die gespeicherte Google-ID wird gerade gebaut.',
-            'Bitte die Erstanreicherung verwenden.')
+    if modus not in ('A', 'B'):
+        return fehlerseite(request, 'Diese Art gibt es nicht',
+                           'Bitte auf der Startseite eine der beiden Arten wählen.')
     zustand['hochgeladen'] = None
-    return seite(request, 'datei.html', 'datei', bericht=None)
+    zustand['modus'] = modus
+    return seite(request, 'datei.html', 'datei', bericht=None, modus=modus)
 
 
 @app.post('/datei', response_class=HTMLResponse)
-async def datei_hochladen(request: Request, datei: UploadFile = None):
+async def datei_hochladen(request: Request, datei: UploadFile = None,
+                          modus: str = Form('A')):
+    if modus not in ('A', 'B'):
+        return fehlerseite(request, 'Diese Art gibt es nicht',
+                           'Bitte auf der Startseite eine der beiden Arten wählen.')
     if not datei or not datei.filename:
         return fehlerseite(request, 'Es wurde keine Datei ausgewählt',
                            'Bitte eine CSV-Datei auswählen und erneut hochladen.')
@@ -226,7 +252,7 @@ async def datei_hochladen(request: Request, datei: UploadFile = None):
         await datei.close()
 
     try:
-        bericht = pruefe_datei(ziel)
+        bericht = pruefe_datei(ziel, modus=modus)
     except Exception:
         logger.exception('Datei nicht lesbar')
         return fehlerseite(
@@ -237,7 +263,8 @@ async def datei_hochladen(request: Request, datei: UploadFile = None):
 
     zustand['hochgeladen'] = ziel if bericht.start_moeglich else None
     zustand['kunden'] = bericht.kunden
-    return seite(request, 'datei.html', 'datei', bericht=bericht)
+    zustand['modus'] = modus
+    return seite(request, 'datei.html', 'datei', bericht=bericht, modus=modus)
 
 
 # ==========================================================================
@@ -251,7 +278,8 @@ def lauf_starten(request: Request):
         return fehlerseite(request, 'Die Datei ist nicht mehr da',
                            'Bitte die Datei noch einmal hochladen.')
 
-    worker = Worker(provider_holen(), DATENBANK)
+    worker = Worker(provider_holen(zustand['modus']), DATENBANK,
+                    modus=zustand['modus'])
     try:
         job_id = worker.starten(quelle, email=None,
                                 kunden_total=zustand['kunden'])
@@ -278,7 +306,8 @@ def lauf_fortsetzen(request: Request):
             f'Sie liegt nicht mehr im Ordner der hochgeladenen Dateien.',
             'Bitte dieselbe Datei erneut hochladen und einen neuen Lauf starten.')
 
-    worker = Worker(provider_holen(), DATENBANK)
+    worker = Worker(provider_holen(offen['modus']), DATENBANK,
+                    modus=offen['modus'])
     try:
         worker.fortsetzen(offen['id'], quelle)
     except LaeuftBereits as hinweis:
@@ -366,7 +395,8 @@ def ergebnis_zeigen(request: Request, job_id: int):
     dateien = [{
         'schluessel': schluessel, 'titel': titel, 'text': text,
         'kunden': gezaehlt.get(ergebnis, 0),
-    } for schluessel, titel, text, ergebnis in AUSGABEN] if vollstaendig else []
+    } for schluessel, titel, text, ergebnis
+        in AUSGABEN.get(job['modus'], AUSGABEN['A'])] if vollstaendig else []
 
     return seite(request, 'ergebnis.html', 'ergebnis', job_id=job_id,
                  ueberschrift=ueberschrift, zusammenfassung=zusammenfassung,
@@ -468,10 +498,15 @@ def logging_einrichten() -> None:
 
 
 def provider_einrichten(antworten: str = None, quelle: str = 'fake'):
-    """Legt fest, woher die Treffer kommen. Ohne Angabe: feste Antworten."""
-    if quelle == 'apify':
-        import apify_provider
-        zustand['provider'] = apify_provider.aus_konfiguration()
+    """
+    Legt fest, woher die Treffer kommen.
+
+    «echt» heisst: Apify für Modus A, Google für Modus B — die Wahl fällt erst
+    beim Start des Laufs, weil sie am Modus hängt. Sonst feste Antworten aus
+    einer Datei, für beide Modi.
+    """
+    if quelle == 'echt':
+        zustand['provider'] = None
         return
     if antworten:
         zustand['provider'] = FakeProvider.aus_csv(str(antworten))
@@ -482,8 +517,10 @@ def provider_einrichten(antworten: str = None, quelle: str = 'fake'):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description='Startet die Weboberfläche für die Anreicherung.')
-    parser.add_argument('--quelle', choices=('fake', 'apify'), default='fake',
-                        help='woher die Treffer kommen (Standard: feste Antworten)')
+    parser.add_argument('--quelle', choices=('fake', 'echt'), default='fake',
+                        help='woher die Treffer kommen: «echt» nutzt Apify für '
+                             'die Erstanreicherung und Google für das '
+                             'Auffrischen (Standard: feste Antworten)')
     parser.add_argument('--antworten', default=None,
                         help='Antwortdatei für --quelle fake')
     parser.add_argument('--offen', action='store_true',

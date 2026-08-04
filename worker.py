@@ -32,11 +32,12 @@ class Worker:
 
     def __init__(self, provider, datenbank_pfad: str,
                  timeout_sekunden: float = STANDARD_TIMEOUT_SEKUNDEN,
-                 arbeiter: int = STANDARD_ARBEITER):
+                 arbeiter: int = STANDARD_ARBEITER, modus: str = 'A'):
         self.provider = provider
         self.datenbank_pfad = str(datenbank_pfad)
         self.timeout_sekunden = timeout_sekunden
         self.arbeiter = arbeiter
+        self.modus = modus
 
         self._thread = None
         self._abbruch = threading.Event()
@@ -65,7 +66,8 @@ class Worker:
             # Der Job entsteht hier und nicht erst im Thread: sonst könnte ein
             # zweiter Start in der Lücke dazwischen durchrutschen.
             with Datenbank(self.datenbank_pfad) as datenbank:
-                job_id = datenbank.job_anlegen('A', Path(eingabe_pfad).name,
+                job_id = datenbank.job_anlegen(self.modus,
+                                               Path(eingabe_pfad).name,
                                                kunden_total=kunden_total,
                                                email=email)
                 datenbank.status_setzen(job_id, 'LAEUFT')
@@ -118,7 +120,8 @@ class Worker:
         try:
             lauf = Lauf(self.provider, datenbank,
                         timeout_sekunden=self.timeout_sekunden,
-                        arbeiter=self.arbeiter, abbruch=self._abbruch)
+                        arbeiter=self.arbeiter, abbruch=self._abbruch,
+                        modus=self.modus)
             self.ergebnis = lauf.fortsetzen(job_id, eingabe_pfad, ausgabe_ordner)
         except Exception as fehler:
             self.fehler = fehler

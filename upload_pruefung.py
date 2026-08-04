@@ -29,9 +29,17 @@ from data_cleaner import DataCleaner
 
 logger = logging.getLogger(__name__)
 
-# 02_DATENVERTRAG.md §1, Modus A
+# 02_DATENVERTRAG.md §1
 PFLICHTSPALTEN = ('SearchString', 'PLZ', 'KundenNr')
+PFLICHTSPALTEN_JE_MODUS = {
+    'A': ('SearchString', 'PLZ', 'KundenNr'),
+    'B': ('placeId', 'KundenNr'),
+}
 KOPFZEILE_VORLAGE = 'SearchString;PLZ;Stadt;KundenNr'
+KOPFZEILE_JE_MODUS = {
+    'A': 'SearchString;PLZ;Stadt;KundenNr',
+    'B': 'placeId;lat;lng;KundenNr',
+}
 
 # 03_ENTSCHEIDUNGEN.md C
 MAX_ZEILEN = 10_000
@@ -102,6 +110,7 @@ class Pruefbericht:
     zeilen: int = 0
     kunden: int = 0
     befunde: list = field(default_factory=list)
+    modus: str = 'A'
 
     @property
     def start_moeglich(self) -> bool:
@@ -199,16 +208,24 @@ def ist_kategorietitel(titel: str) -> bool:
 # Die Prüfung einer Datei
 # ==========================================================================
 
-def pruefe_datei(pfad: str) -> Pruefbericht:
+def pruefe_datei(pfad: str, modus: str = 'A') -> Pruefbericht:
     """
-    Prüft eine Eingabedatei im Modus A und liefert einen Bericht in Klartext.
+    Prüft eine Eingabedatei und liefert einen Bericht in Klartext.
+
+    Im Modus B (Auffrischen über die gespeicherte Google-Id) entfallen die
+    beiden inhaltlichen Prüfungen: es gibt weder einen Suchbegriff noch ein
+    Strassenfeld, an dem etwas falsch sein könnte. Geprüft werden die
+    Pflichtspalten und die Zeilenobergrenze.
 
     Wirft keine Ausnahme wegen des Inhalts — was nicht stimmt, steht im
     Bericht. Nur eine Datei, die sich gar nicht lesen lässt, führt zu einem
     Fehler beim Aufrufer.
     """
+    if modus not in PFLICHTSPALTEN_JE_MODUS:
+        raise ValueError(f'Unbekannter Modus "{modus}", erlaubt sind A und B.')
+
     quelle = Path(pfad)
-    bericht = Pruefbericht(dateiname=quelle.name)
+    bericht = Pruefbericht(dateiname=quelle.name, modus=modus)
 
     df = pd.read_csv(quelle, sep=';', encoding='utf-8-sig', dtype=str).fillna('')
     rohzeilen = _rohzeilen(quelle)
@@ -219,7 +236,7 @@ def pruefe_datei(pfad: str) -> Pruefbericht:
     _pruefe_zeilenzahl(df, bericht)
     _pruefe_pflichtspalten(df, rohzeilen, bericht)
 
-    if 'SearchString' in df.columns:
+    if modus == 'A' and 'SearchString' in df.columns:
         _pruefe_kostenstellen(df, rohzeilen, bericht)
         _pruefe_kategorietitel(df, rohzeilen, bericht)
 
@@ -269,7 +286,8 @@ def _pruefe_zeilenzahl(df: pd.DataFrame, bericht: Pruefbericht) -> None:
 
 def _pruefe_pflichtspalten(df: pd.DataFrame, rohzeilen: list,
                            bericht: Pruefbericht) -> None:
-    fehlend = [spalte for spalte in PFLICHTSPALTEN if spalte not in df.columns]
+    fehlend = [spalte for spalte in PFLICHTSPALTEN_JE_MODUS[bericht.modus]
+               if spalte not in df.columns]
     if not fehlend:
         return
 
@@ -278,7 +296,8 @@ def _pruefe_pflichtspalten(df: pd.DataFrame, rohzeilen: list,
     bericht.befunde.append(Befund(
         art='pflichtspalten', schwere=ABWEISUNG, anzahl=len(df),
         meldung=(f'In der Datei fehlt die Spalte {welche}. '
-                 f'Die erste Zeile muss so aussehen: {KOPFZEILE_VORLAGE}'),
+                 f'Die erste Zeile muss so aussehen: '
+                 f'{KOPFZEILE_JE_MODUS[bericht.modus]}'),
         beispiel_zeile=kopfzeile, zeilennummer=1))
 
 

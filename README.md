@@ -30,6 +30,8 @@ google-maps-scraper-app/
 ├── webapp.py             \# Die Weboberfläche (FastAPI, Jinja2, HTMX)
 ├── upload\_pruefung.py    \# Prüft die Eingabedatei, bevor der Lauf startet
 ├── worker.py             \# Der Lauf im Hintergrund: starten, abbrechen, fortsetzen
+├── modus\_b.py           \# Auffrischen über die Google-ID: Prüfung statt Scoring
+├── google\_provider.py    \# Datenquelle Google Place Details (Modus B)
 ├── pipeline.py           \# Ein Lauf: Eingabe → Provider → Datenbank → drei Dateien
 ├── place\_provider.py     \# Candidate und die Provider-Schnittstelle
 ├── apify\_provider.py     \# Datenquelle Apify — kennt als einziges Modul deren Felder
@@ -116,6 +118,16 @@ python webapp.py
 Dann im Browser `http://localhost:8000` öffnen. Vier Seiten führen durch den
 Ablauf: Art wählen, Datei hochladen, Lauf beobachten, Ergebnis herunterladen.
 
+Zur Wahl stehen zwei Arten:
+
+* **Erstanreicherung** — nur Name und Adresse sind bekannt. Jeder Kunde wird
+  auf Google Maps gesucht, das Scoring entscheidet, welcher Treffer passt.
+  Spalten: `SearchString;PLZ;Stadt;KundenNr`
+* **Auffrischen** — die Google-ID steht schon im ERP. Die Daten werden direkt
+  über die ID geholt, ohne Suchen und ohne Raten. Geprüft wird nur, ob der
+  Betrieb noch offen ist und noch am selben Ort steht.
+  Spalten: `placeId;lat;lng;KundenNr` — `lat` und `lng` sind freiwillig.
+
 Das Fenster darf jederzeit geschlossen werden — der Lauf geht weiter. Wird das
 Programm mitten im Lauf beendet, bietet die Startseite beim nächsten Mal die
 Fortsetzung an; kein Kunde wird doppelt gesucht.
@@ -132,7 +144,9 @@ Zum Üben ohne Apify-Kosten mit festen Antworten:
 python webapp.py --antworten agent/testdaten/fixture_optimierte_daten.csv
 ```
 
-Für den Produktivlauf über Apify: `python webapp.py --quelle apify`
+Für den Produktivlauf: `python webapp.py --quelle echt` — die Erstanreicherung
+läuft dann über Apify, das Auffrischen über Google Place Details. Für das
+Auffrischen braucht es einen `GOOGLE_API_KEY` in der Datei `.env`.
 
 ## Bedienung über die Kommandozeile
 

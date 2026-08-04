@@ -25,6 +25,7 @@ import pandas as pd
 
 from data_cleaner import (DataCleaner, ausgabeordner_fuer, leere_ablage,
                           schreibe_ausgabedateien)
+import modus_b
 from place_provider import candidate_aus_zeile, leere_ausgabezeile
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,12 @@ STANDARD_ARBEITER = 6
 # schnell der Abbruch greift (Abnahmekriterium: unter 5 Sekunden).
 TAKT_SEKUNDEN = 0.2
 
-# Pflichtspalten Modus A (02_DATENVERTRAG.md §1)
+# Pflichtspalten je Modus (02_DATENVERTRAG.md §1)
 PFLICHTSPALTEN = ('SearchString', 'PLZ', 'KundenNr')
+PFLICHTSPALTEN_JE_MODUS = {
+    'A': ('SearchString', 'PLZ', 'KundenNr'),
+    'B': ('placeId', 'KundenNr'),
+}
 
 # Ausgabedatei → Wert der Spalte kunde.ergebnis (02_DATENVERTRAG.md §5)
 ERGEBNIS_JE_DATEI = {
@@ -70,13 +75,17 @@ class Lauf:
 
     def __init__(self, provider, datenbank, cleaner: DataCleaner = None,
                  timeout_sekunden: float = STANDARD_TIMEOUT_SEKUNDEN,
-                 arbeiter: int = STANDARD_ARBEITER, abbruch: threading.Event = None):
+                 arbeiter: int = STANDARD_ARBEITER, abbruch: threading.Event = None,
+                 modus: str = 'A'):
         self.provider = provider
         self.datenbank = datenbank
         self.cleaner = cleaner or DataCleaner()
         self.timeout_sekunden = timeout_sekunden
         self.arbeiter = max(1, int(arbeiter))
         self.abbruch = abbruch or threading.Event()
+        if modus not in PFLICHTSPALTEN_JE_MODUS:
+            raise ValueError(f'Unbekannter Modus "{modus}", erlaubt sind A und B.')
+        self.modus = modus
 
     # ------------------------------------------------------------------
     # Der Lauf
@@ -84,11 +93,11 @@ class Lauf:
 
     def ausfuehren(self, eingabe_pfad: str, ausgabe_ordner: str = None,
                    email: str = None) -> dict:
-        """Arbeitet eine Eingabedatei im Modus A ab. Legt einen neuen Job an."""
+        """Arbeitet eine Eingabedatei ab und legt einen neuen Job an."""
         eingabe = Path(eingabe_pfad)
         kunden = self._kunden_lesen(eingabe)
 
-        job_id = self.datenbank.job_anlegen('A', eingabe.name,
+        job_id = self.datenbank.job_anlegen(self.modus, eingabe.name,
                                             kunden_total=len(kunden), email=email)
         self.datenbank.status_setzen(job_id, 'LAEUFT')
         logger.info(f'Job {job_id}: {len(kunden)} Kunden aus {eingabe.name}, '
@@ -109,6 +118,10 @@ class Lauf:
         if not job:
             raise ValueError(f'Einen Auftrag mit der Nummer {job_id} gibt es nicht.')
 
+        # Der Modus gehört zum Job, nicht zum Aufrufer: ein fortgesetzter Lauf
+        # arbeitet weiter, wie er begonnen hat.
+        self.modus = job['modus']
+
         eingabe = Path(eingabe_pfad)
         kunden = self._kunden_lesen(eingabe)
         if job['status'] != 'LAEUFT':
@@ -122,7 +135,8 @@ class Lauf:
     def _kunden_lesen(self, eingabe: Path) -> list:
         df = pd.read_csv(eingabe, sep=';', encoding='utf-8-sig', dtype=str).fillna('')
 
-        fehlend = [s for s in PFLICHTSPALTEN if s not in df.columns]
+        fehlend = [s for s in PFLICHTSPALTEN_JE_MODUS[self.modus]
+                   if s not in df.columns]
         if fehlend:
             raise ValueError('In der Eingabedatei fehlen die Spalten: '
                              + ', '.join(fehlend))
@@ -219,10 +233,15 @@ class Lauf:
                 if naechster is None:
                     return
                 kunden_nr, stamm = naechster
-                auftrag = arbeiter.submit(
-                    self._kandidaten_holen,
-                    str(stamm.get('SearchString', '')).strip(),
-                    str(stamm.get('PLZ', '')).strip())
+                if self.modus == 'B':
+                    auftrag = arbeiter.submit(
+                        self._kandidat_ueber_id,
+                        str(stamm.get('placeId', '')).strip())
+                else:
+                    auftrag = arbeiter.submit(
+                        self._kandidaten_holen,
+                        str(stamm.get('SearchString', '')).strip(),
+                        str(stamm.get('PLZ', '')).strip())
                 auftraege[auftrag] = (kunden_nr, stamm)
                 unerledigt.add(auftrag)
 
@@ -256,6 +275,9 @@ class Lauf:
 
     def _einen_kunden(self, job_id: int, kunden_nr: str, stamm, kandidaten: list) -> dict:
         """Entscheidet einen Kunden und schreibt ihn samt Kandidaten weg."""
+        if self.modus == 'B':
+            return self._einen_kunden_ueber_id(job_id, kunden_nr, stamm, kandidaten)
+
         search_string = str(stamm.get('SearchString', '')).strip()
         plz = str(stamm.get('PLZ', '')).strip()
         stadt = str(stamm.get('Stadt', '')).strip()
@@ -276,6 +298,38 @@ class Lauf:
 
         return ablage
 
+    def _einen_kunden_ueber_id(self, job_id: int, kunden_nr: str, stamm,
+                               kandidaten: list) -> dict:
+        """
+        Modus B: ein Kunde, eine Id, ein Ergebnis.
+
+        Kein Scoring, keine Kandidatenauswahl. Der einzige Treffer wird
+        trotzdem in `kandidat` abgelegt — damit die Wiederaufnahme ihn nicht
+        erneut holen muss und die Datenbank in beiden Modi dasselbe erzählt.
+        """
+        place_id = str(stamm.get('placeId', '')).strip()
+        breite = str(stamm.get('lat', '')).strip()
+        laenge = str(stamm.get('lng', '')).strip()
+        kandidat = kandidaten[0] if kandidaten else None
+
+        ablage = modus_b.entscheide_kunde(kunden_nr, stamm, kandidat)
+        datei = self._gewaehlte_datei(ablage)
+        kopfzeile = ablage[datei][0]
+
+        eintraege = []
+        if kandidat is not None:
+            eintraege = [(kandidat, kopfzeile['score'],
+                          ENTSCHEID_JE_DATEI[datei], kopfzeile['grund'])]
+
+        self.datenbank.kunde_mit_kandidaten_schreiben(
+            job_id, kunden_nr, eintraege,
+            place_id=place_id, lat=breite, lng=laenge,
+            ergebnis=ERGEBNIS_JE_DATEI[datei],
+            qualitaet=kopfzeile['qualitaet'],
+            grund=kopfzeile['grund'])
+
+        return ablage
+
     def _aus_datenbank(self, kunde: dict) -> dict:
         """
         Stellt die Entscheidung eines bereits verarbeiteten Kunden wieder her.
@@ -286,13 +340,39 @@ class Lauf:
         """
         kandidaten = [candidate_aus_zeile(z)
                       for z in self.datenbank.kandidaten_lesen(kunde['id'])]
+
+        if self.modus == 'B':
+            stamm = {'placeId': kunde['place_id'] or '',
+                     'lat': kunde['lat'] or '', 'lng': kunde['lng'] or ''}
+            return modus_b.entscheide_kunde(
+                kunde['kunden_nr'], stamm, kandidaten[0] if kandidaten else None)
+
         gruppe = self._als_gruppe(kunde['kunden_nr'], kunde['search_string'] or '',
                                   kunde['plz'] or '', kunde['stadt'] or '', kandidaten)
         return self.cleaner.entscheide_kunde(kunde['kunden_nr'], gruppe)
 
-    def _kandidaten_holen(self, search_string: str, plz: str) -> list:
+    def _kandidat_ueber_id(self, place_id: str) -> list:
         """
-        Fragt den Provider, aber nicht länger als der Timeout erlaubt.
+        Holt einen Betrieb über seine Id — mit derselben Frist wie jeder Aufruf.
+
+        Liefert eine Liste mit null oder einem Eintrag, damit der Lauf beide
+        Modi gleich behandeln kann.
+        """
+        if not place_id:
+            return []
+        kandidat = self._mit_frist(lambda: self.provider.fetch_by_id(place_id),
+                                   place_id)
+        return [kandidat] if kandidat else []
+
+    def _kandidaten_holen(self, search_string: str, plz: str) -> list:
+        """Fragt den Provider nach Treffern zu einem Text (Modus A)."""
+        treffer = self._mit_frist(
+            lambda: self.provider.fetch_by_text(search_string, plz), search_string)
+        return list(treffer) if treffer else []
+
+    def _mit_frist(self, aufruf, bezeichnung: str):
+        """
+        Führt einen Aufruf an die Datenquelle aus, aber nicht länger als erlaubt.
 
         Die Grenze gilt je Aufruf und für jeden Provider, nicht nur für Apify:
         ein Aufruf, der nicht zurückkommt, darf einen Lauf über 2'500 Kunden
@@ -300,28 +380,28 @@ class Lauf:
         behandelt, ohne Retry (03_ENTSCHEIDUNGEN.md C).
         """
         ausfuehrer = ThreadPoolExecutor(max_workers=1)
-        auftrag = ausfuehrer.submit(self.provider.fetch_by_text, search_string, plz)
+        auftrag = ausfuehrer.submit(aufruf)
         ende = time.monotonic() + self.timeout_sekunden
         try:
             while True:
                 if self.abbruch.is_set():
-                    return []
+                    return None
                 rest = ende - time.monotonic()
                 if rest <= 0:
                     logger.warning(f'Keine Antwort innerhalb von '
                                    f'{self.timeout_sekunden} Sekunden für '
-                                   f'"{search_string}", wird als leeres Ergebnis '
+                                   f'"{bezeichnung}", wird als leeres Ergebnis '
                                    f'behandelt.')
                     auftrag.cancel()
-                    return []
+                    return None
                 try:
-                    return list(auftrag.result(timeout=min(TAKT_SEKUNDEN, rest)))
+                    return auftrag.result(timeout=min(TAKT_SEKUNDEN, rest))
                 except FutureTimeout:
                     continue
         except Exception as fehler:
-            logger.error(f'Datenquelle meldet einen Fehler für "{search_string}": '
+            logger.error(f'Datenquelle meldet einen Fehler für "{bezeichnung}": '
                          f'{fehler}')
-            return []
+            return None
         finally:
             # Nicht warten: ein hängender Aufruf soll den Lauf nicht festhalten.
             ausfuehrer.shutdown(wait=False)

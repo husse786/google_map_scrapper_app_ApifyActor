@@ -41,16 +41,18 @@
       </button>
     </form>
 
-    <div class="kachel gesperrt" aria-disabled="true">
-      <span class="kachel-titel">Auffrischen</span>
-      <span class="kachel-unter">Google-ID ist schon im ERP</span>
-      <span class="kachel-text">
-        Wir holen die aktuellen Daten direkt über die gespeicherte ID.
-        Kein Suchen, kein Raten.
-      </span>
-      <span class="kachel-spalten">placeId ; lat ; lng ; KundenNr</span>
-      <span class="kachel-sperrhinweis">Noch nicht verfügbar.</span>
-    </div>
+    <form method="get" action="/datei" class="wahl-form">
+      <input type="hidden" name="modus" value="B">
+      <button class="kachel" type="submit">
+        <span class="kachel-titel">Auffrischen</span>
+        <span class="kachel-unter">Google-ID ist schon im ERP</span>
+        <span class="kachel-text">
+          Wir holen die aktuellen Daten direkt über die gespeicherte ID.
+          Kein Suchen, kein Raten.
+        </span>
+        <span class="kachel-spalten">placeId ; lat ; lng ; KundenNr</span>
+      </button>
+    </form>
   </div>
 </section>
 {% endif %}
