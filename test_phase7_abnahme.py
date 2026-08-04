@@ -12,7 +12,10 @@ from fastapi.testclient import TestClient
 
 import mail
 import webapp
-from apify_provider import ENDGUELTIGE_FEHLER, NETZ_MELDUNG, _pruefen_ob_endgueltig
+from apify_client.errors import ApifyApiError
+
+from apify_provider import (ENDGUELTIGE_FEHLER, NETZ_MELDUNG, ApifyProvider,
+                            _pruefen_ob_endgueltig)
 from data_cleaner import OUTPUT_FILES
 from db import Datenbank
 from fake_provider import FakeProvider
@@ -416,6 +419,196 @@ def test_apify_fehler_wird_richtig_einsortiert():
     # Alles andere ist ein Fehlschlag bei diesem einen Kunden.
     assert _pruefen_ob_endgueltig(ApifyFehler('rate-limit-exceeded')) is None
     assert _pruefen_ob_endgueltig(ApifyFehler('', 'irgendetwas')) is None
+
+
+# ============================================================================
+# K1: ein Fehler von Apify ist nie «nichts gefunden»
+# ============================================================================
+
+def apify_fehler(art: str = '', text: str = 'irgendwas') -> ApifyApiError:
+    """
+    Ein echter ApifyApiError, ohne den Konstruktor zu bemühen.
+
+    Der verlangt eine HTTP-Antwort; für die Einordnung zählen nur `type` und
+    `message`. Der Typ muss echt sein, weil `fetch_by_text` genau darauf fängt.
+    """
+    fehler = ApifyApiError.__new__(ApifyApiError)
+    Exception.__init__(fehler, text)
+    fehler.type = art
+    fehler.message = text
+    return fehler
+
+
+class UnbekannterApifyFehler:
+    """Apify meldet einen Fehler, den die Liste nicht kennt."""
+
+    def __init__(self):
+        self.aufrufe = 0
+
+    def _provider(self):
+        provider = ApifyProvider('token', 'actor')
+
+        class ActorStub:
+            def start(_self, **kwargs):
+                self.aufrufe += 1
+                raise apify_fehler('rate-limit-exceeded', 'Too many requests')
+
+        provider.actor = ActorStub()
+        return provider
+
+    def fetch_by_text(self, search_string, plz):
+        return self._provider().fetch_by_text(search_string, plz)
+
+    def fetch_by_id(self, place_id):
+        return None
+
+
+def test_unbekannter_apify_fehler_ist_kein_leeres_ergebnis():
+    """Der Kern von K1: die Frage wurde nicht beantwortet, das ist kein Ergebnis."""
+    provider = ApifyProvider('token', 'actor')
+
+    class ActorStub:
+        def start(self, **kwargs):
+            raise apify_fehler('rate-limit-exceeded', 'Too many requests')
+
+    provider.actor = ActorStub()
+
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_text('Muster Laden, Hauptstrasse 1, 5620 Musterdorf',
+                               '5620')
+
+    # Vorübergehend: ein einzelner Ausrutscher kostet nur diesen einen Kunden.
+    assert gemeldet.value.endgueltig is False
+    assert 'nichts gefunden' in gemeldet.value.meldung
+    assert 'fortsetzen' in gemeldet.value.meldung
+    assert 'ß' not in gemeldet.value.meldung
+    # Was Apify wirklich schrieb, bleibt im Protokoll — nicht in der Oberfläche.
+    assert 'Too many requests' not in gemeldet.value.meldung
+
+
+def test_unbekannter_apify_fehler_stoppt_den_lauf_nach_zehn(tmp_path):
+    """
+    Der Nachweis aus K1.
+
+    Vor der Korrektur hätte dieser Lauf alle 2'500 Kunden nach ③ geschrieben
+    und sich `FERTIG` genannt. Jetzt endet er nach zehn Fehlschlägen mit
+    `FEHLER` und einer Erklärung.
+    """
+    eingabe = eingabe_schreiben(tmp_path, 2500)
+    provider = UnbekannterApifyFehler()
+    ziel = tmp_path / 'aus'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(provider, datenbank, arbeiter=1).ausfuehren(
+            eingabe, str(ziel))
+        job = datenbank.job_lesen(ergebnis['job_id'])
+        kunden = datenbank.kunden_lesen(ergebnis['job_id'])
+
+    assert ergebnis['status'] == 'FEHLER'
+    assert job['status'] == 'FEHLER'
+    assert 'nichts gefunden' in job['fehlermeldung']
+
+    # Nach zehn ist Schluss, nicht nach 2'500.
+    assert provider.aufrufe <= MAX_FEHLSCHLAEGE_HINTEREINANDER + 2
+    # Die ersten neun Ausrutscher kosten je einen Kunden — so gewollt. Der
+    # Unterschied zu vorher: neun statt 2'500, und der Lauf sagt es.
+    assert len(kunden) < MAX_FEHLSCHLAEGE_HINTEREINANDER
+    assert all(k['ergebnis'] == 'nicht_moeglich' for k in kunden)
+    assert not ziel.exists(), 'ein gestoppter Lauf hinterlässt keine Dateien'
+
+
+def test_ein_einzelner_unbekannter_fehler_kostet_nur_einen_kunden(tmp_path):
+    """Neun Fehlschläge verträgt der Lauf — sonst wäre er zu empfindlich."""
+
+    class NurAmAnfang:
+        def __init__(self):
+            self.aufrufe = 0
+
+        def fetch_by_text(self, search_string, plz):
+            self.aufrufe += 1
+            if self.aufrufe <= 3:
+                raise QuelleNichtVerfuegbar('Kurzer Aussetzer.', endgueltig=False)
+            return [Candidate(title='Muster', street='Hauptstrasse 1',
+                              postal_code=plz, place_id=f'PLACE_{self.aufrufe}')]
+
+        def fetch_by_id(self, place_id):
+            return None
+
+    eingabe = eingabe_schreiben(tmp_path, 20)
+    ziel = tmp_path / 'aus'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(NurAmAnfang(), datenbank, arbeiter=1).ausfuehren(
+            eingabe, str(ziel))
+
+    assert ergebnis['status'] == 'FERTIG'
+    assert ergebnis['kunden_erledigt'] == 20
+    # Die drei gescheiterten landen in ③, der Rest wird normal entschieden.
+    assert len(lies(ziel / OUTPUT_FILES['nicht_moeglich'])) == 3
+
+
+def test_bekannte_arten_stoppen_weiterhin_sofort():
+    """Die sechs Arten aus Phase 7 bleiben endgültig — K1 ändert daran nichts."""
+    provider = ApifyProvider('token', 'actor')
+
+    class ActorStub:
+        def start(self, **kwargs):
+            raise apify_fehler('monthly-usage-hard-limit-exceeded', '')
+
+    provider.actor = ActorStub()
+
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_text('Muster, Hauptstrasse 1, 5620 Musterdorf', '5620')
+
+    assert gemeldet.value.endgueltig is True
+    assert 'Guthaben' in gemeldet.value.meldung
+
+
+def test_kein_treffer_bleibt_ein_ergebnis():
+    """
+    Gegenprobe: der Weg für «nichts gefunden» ist unberührt.
+
+    Ein erfolgreicher Lauf mit leerem Datensatz liefert weiterhin eine leere
+    Liste — der Kunde gehört nach ③, und das ist richtig so.
+    """
+    provider = ApifyProvider('token', 'actor')
+
+    class LaufStub:
+        def wait_for_finish(self, wait_secs=None):
+            return {'id': 'LAUF_1', 'status': 'SUCCEEDED',
+                    'defaultDatasetId': 'DATENSATZ_1'}
+
+    class DatensatzStub:
+        def iterate_items(self):
+            return iter([])
+
+    class ActorStub:
+        def start(self, **kwargs):
+            return {'id': 'LAUF_1'}
+
+    class ClientStub:
+        def run(self, lauf_id):
+            return LaufStub()
+
+        def dataset(self, kennung):
+            return DatensatzStub()
+
+    provider.actor = ActorStub()
+    provider.client = ClientStub()
+
+    assert provider.fetch_by_text('Muster, Hauptstrasse 1, 5620 Musterdorf',
+                                  '5620') == []
+
+
+def test_beschreibung_passt_zum_verhalten():
+    """K2: wer die Beschreibung liest, baut den Fehler nicht wieder ein."""
+    text = ApifyProvider.fetch_by_text.__doc__
+
+    assert 'kein Ergebnis' in text
+    assert 'QuelleNichtVerfuegbar' in text
+    # Die alte, falsche Aussage darf nicht zurückkommen.
+    assert 'behandelt alle\n        drei Fälle gleich' not in text
+    assert 'oder Apify einen Fehler meldet' not in text
 
 
 # ============================================================================
