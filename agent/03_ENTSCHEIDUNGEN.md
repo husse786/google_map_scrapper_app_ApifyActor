@@ -122,7 +122,8 @@ und Eingangs-versus-Gebäudemitte.
 |---|---|---|
 | Timeout pro API-Aufruf | **180 Sekunden** | fehlt heute völlig; hängender Lauf blockiert unbegrenzt. Von 90 s heraufgesetzt: gemessene Kaltstarts lagen bei 83, 87 und **91** Sekunden — 90 s hätte gesunde Aufrufe fälschlich nach ③ geschoben. Der Timeout soll Hänger stoppen, nicht Tempo erzwingen |
 | Timeout Google Place Details | **30 Sekunden** | (Ergänzt nach Phase 6.) Ein Direktabruf über die ID ist kein Actor, der eine Suche fährt — er antwortet in Sekundenbruchteilen. 180 s wären hier kein Schutz, sondern eine Blockade |
-| Verhalten bei Timeout | wie leeres Ergebnis → ③ | kein Retry, kein Zusatzkosten |
+| Verhalten bei Timeout | **wie ein Netzfehler**, zählt zu den zehn hintereinander | (Geändert nach Phase 7 v1.2.) Ursprünglich stand hier „wie leeres Ergebnis → ③". Das war falsch, aus demselben Grund wie K1 und K2: **eine Zeitüberschreitung ist keine Antwort.** In Modus B wird daraus die Aussage, der Kunde sei bei Google gelöscht — das stimmt nicht. Ein einzelner Ausrutscher kostet weiterhin einen Kunden; hängt die Quelle systematisch, stoppt der Lauf nach zehn statt 2'500 Zeilen in ③ zu schreiben |
+| Retry nach Timeout | **keiner** | unverändert. Der Zähler ersetzt keine Wiederholung |
 | Parallele Worker (Apify) | **6** | produktiv getestet, stabil |
 | Maximale Zeilen pro Upload | **10'000** | Schutz vor versehentlichem Kontingentverbrauch |
 | Automatische Wiederholung | **keine** | verdreifacht Laufzeit und Kosten; dafür gibt es Datei ③ |
