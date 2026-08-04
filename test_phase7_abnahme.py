@@ -800,6 +800,166 @@ def test_geloeschte_id_bleibt_im_lauf_ein_ergebnis(tmp_path):
 
 
 # ============================================================================
+# K1 (v1.3): eine Zeitüberschreitung ist keine Antwort
+#
+# 03_ENTSCHEIDUNGEN.md C, geändert nach Phase 7 v1.2. Vorher galt ein Timeout
+# als leeres Ergebnis und schob den Kunden nach ③ — im Modus B mit der Aussage,
+# er sei bei Google gelöscht. Jetzt zählt er wie ein Netzfehler.
+# ============================================================================
+
+class HaengtImmer:
+    """Antwortet nie rechtzeitig, in beiden Modi."""
+
+    def __init__(self, sekunden: float = 30):
+        self.sekunden = sekunden
+        self.aufrufe = 0
+
+    def fetch_by_text(self, search_string, plz):
+        self.aufrufe += 1
+        time.sleep(self.sekunden)
+        return []
+
+    def fetch_by_id(self, place_id):
+        self.aufrufe += 1
+        time.sleep(self.sekunden)
+        return None
+
+
+class HaengtEinmal:
+    """
+    Beim ersten Kunden zu langsam, danach ein sauberer Treffer.
+
+    Der Treffer spiegelt die Eingabe, damit die neun übrigen Kunden nicht in ③
+    landen — sonst liesse sich nicht ablesen, ob der Timeout einen Kunden
+    gekostet hat oder alle zehn.
+    """
+
+    def __init__(self, sekunden: float = 30):
+        self.sekunden = sekunden
+        self.aufrufe = 0
+
+    def fetch_by_text(self, search_string, plz):
+        self.aufrufe += 1
+        if self.aufrufe == 1:
+            time.sleep(self.sekunden)
+        teile = [t.strip() for t in search_string.split(',')]
+        return [Candidate(title=teile[0], street=teile[1], postal_code=plz,
+                          place_id=f'PLACE_{self.aufrufe}')]
+
+    def fetch_by_id(self, place_id):
+        raise AssertionError('Im Modus A wird nicht über die Id gefragt.')
+
+
+def test_zeitueberschreitung_ist_kein_leeres_ergebnis():
+    """
+    Der Kern von K1 v1.3, auf der untersten Ebene.
+
+    `_mit_frist` gab bei Ablauf der Frist `None` zurück — daraus wurde eine
+    gewöhnliche leere Liste, also ein Ergebnis. Jetzt kommt eine Ausnahme.
+    """
+    lauf = Lauf(HaengtImmer(), None, timeout_sekunden=0.2)
+
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        lauf._mit_frist(lambda: time.sleep(30), 'Muster Laden')
+
+    assert gemeldet.value.endgueltig is False
+    assert 'nicht rechtzeitig geantwortet' in gemeldet.value.meldung
+    assert 'Bitte' in gemeldet.value.meldung
+    assert 'ß' not in gemeldet.value.meldung
+
+
+def test_ein_einzelner_timeout_kostet_genau_einen_kunden(tmp_path):
+    """
+    Erste der drei Wirkungen aus dem Korrekturplan.
+
+    Ein Ausrutscher darf einen Lauf über Stunden nicht töten. Zehn Kunden, nur
+    der erste hängt: der Lauf kommt durch, und genau ein Kunde fehlt.
+    """
+    eingabe = eingabe_schreiben(tmp_path, 10)
+    provider = HaengtEinmal()
+    ziel = tmp_path / 'aus'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(provider, datenbank, timeout_sekunden=0.3,
+                        arbeiter=1).ausfuehren(eingabe, str(ziel))
+
+    assert ergebnis['status'] == 'FERTIG'
+    assert provider.aufrufe == 10, 'kein Retry, kein übersprungener Kunde'
+
+    # Jeder Kunde in genau einer Datei — die Grundregel gilt auch hier.
+    gesamt = sum(len(lies(ziel / OUTPUT_FILES[d])) for d in HAUPTDATEIEN)
+    assert gesamt == 10
+
+    # Genau der eine, der hing — und niemand sonst.
+    ausgefallen = lies(ziel / OUTPUT_FILES['nicht_moeglich'])
+    assert list(ausgefallen['KundenNr']) == ['900001']
+
+
+def test_zehn_timeouts_hintereinander_stoppen_den_lauf(tmp_path):
+    """
+    Zweite Wirkung: `FEHLER` statt `FERTIG` mit vollen ③-Dateien.
+
+    Vorher hätten 2'500 hängende Kunden 2'500 Zeilen in ③ ergeben und der Lauf
+    hätte sich `FERTIG` genannt — ein Ergebnis, in dem keine einzige Frage
+    beantwortet wurde.
+    """
+    eingabe = eingabe_schreiben(tmp_path, 100)
+    provider = HaengtImmer()
+    ziel = tmp_path / 'aus'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(provider, datenbank, timeout_sekunden=0.2,
+                        arbeiter=1).ausfuehren(eingabe, str(ziel))
+        job = datenbank.job_lesen(ergebnis['job_id'])
+
+    assert ergebnis['status'] == 'FEHLER'
+    assert provider.aufrufe <= MAX_FEHLSCHLAEGE_HINTEREINANDER + 2
+    assert not ziel.exists(), 'ein gestoppter Lauf schreibt keine Ausgabedateien'
+    assert 'nicht rechtzeitig geantwortet' in job['fehlermeldung']
+    assert 'ß' not in job['fehlermeldung']
+
+
+def test_timeout_im_modus_b_sagt_nie_geloescht(tmp_path):
+    """
+    Dritte Wirkung, und der Grund für die ganze Änderung.
+
+    Aus einer Zeitüberschreitung wurde im Modus B die Aussage, der Betrieb sei
+    bei Google gelöscht. Der Sachbearbeiter hätte einen intakten Datensatz aus
+    dem ERP genommen, weil die Quelle zu langsam war.
+    """
+    zeilen = [{'placeId': f'PLACE_{i}', 'lat': '', 'lng': '',
+               'KundenNr': f'9{i:05d}'} for i in range(1, 101)]
+    eingabe = tmp_path / 'IDs.csv'
+    pd.DataFrame(zeilen).to_csv(eingabe, sep=';', index=False, encoding='utf-8-sig')
+
+    ziel = tmp_path / 'aus'
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(HaengtImmer(), datenbank, modus='B', timeout_sekunden=0.2,
+                        arbeiter=1).ausfuehren(eingabe, str(ziel))
+        kunden = datenbank.kunden_lesen(ergebnis['job_id'])
+
+    assert ergebnis['status'] == 'FEHLER'
+    assert kunden, 'die Kunden vor dem Stopp stehen in der Datenbank'
+    for kunde in kunden:
+        assert 'gelöscht' not in (kunde['grund'] or '')
+        assert kunde['qualitaet'] == 'NICHT_MOEGLICH (kein Ergebnis)'
+        assert 'nicht geprüft' in kunde['grund']
+
+
+def test_abbruch_bleibt_von_der_aenderung_unberuehrt(tmp_path):
+    """
+    Der Korrekturplan sagt ausdrücklich: das Verhalten bei Abbruch bleibt.
+
+    Abbruch ist ein anderer Rückgabeweg als die Zeitüberschreitung — er liefert
+    weiterhin `None` und wirft nicht.
+    """
+    lauf = Lauf(HaengtImmer(), None, timeout_sekunden=30)
+    lauf.abbruch.set()
+
+    assert lauf._mit_frist(lambda: time.sleep(30), 'Muster Laden') is None
+
+
+# ============================================================================
 # Netz weg — Fehlertext mit Handlungsanweisung
 # ============================================================================
 

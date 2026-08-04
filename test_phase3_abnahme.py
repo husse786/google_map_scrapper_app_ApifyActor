@@ -189,13 +189,20 @@ def test_reihenfolge_der_ausgabe_folgt_der_eingabe(tmp_path):
 
 def test_timeout_gilt_je_aufruf_nicht_je_lauf(tmp_path):
     """
-    Zwölf Kunden, alle hängen, sechs Arbeiter, eine halbe Sekunde Geduld.
+    Neun Kunden, alle hängen, sechs Arbeiter, eine halbe Sekunde Geduld.
 
     Je Aufruf bedeutet: zwei Wellen zu je einer halben Sekunde, und **alle
-    zwölf** Kunden landen in ③. Gälte der Timeout je Lauf, wäre nach der ersten
+    neun** Kunden landen in ③. Gälte der Timeout je Lauf, wäre nach der ersten
     halben Sekunde Schluss und die übrigen Kunden fehlten.
+
+    Geändert in Phase 7 v1.3: vorher zwölf Kunden. Seit `03_ENTSCHEIDUNGEN.md C`
+    zählt eine Zeitüberschreitung wie ein Netzfehler, und zwölf hintereinander
+    stoppen den Lauf — dann liesse sich hier nicht mehr ablesen, ob der Timeout
+    je Aufruf oder je Lauf griff. Neun bleiben unter der Grenze von zehn und
+    trennen die beiden Fragen sauber. Dass zehn den Lauf stoppen, steht in
+    `test_phase7_abnahme.py`.
     """
-    eingabe = eingabe_schreiben(tmp_path, 12)
+    eingabe = eingabe_schreiben(tmp_path, 9)
     provider = HaengenderProvider(sekunden=30)
     ziel = tmp_path / 'ergebnis'
 
@@ -206,10 +213,10 @@ def test_timeout_gilt_je_aufruf_nicht_je_lauf(tmp_path):
     gebraucht = time.monotonic() - beginn
 
     assert ergebnis['status'] == 'FERTIG'
-    assert provider.aufrufe == 12, 'kein Retry, aber auch kein übersprungener Kunde'
-    assert len(lies(ziel / OUTPUT_FILES['nicht_moeglich'])) == 12
+    assert provider.aufrufe == 9, 'kein Retry, aber auch kein übersprungener Kunde'
+    assert len(lies(ziel / OUTPUT_FILES['nicht_moeglich'])) == 9
     invariante_pruefen(ziel, set(lies(eingabe)['KundenNr']))
-    # Zwei Wellen zu 0.5 s, nicht zwölf.
+    # Zwei Wellen zu 0.5 s, nicht neun.
     assert gebraucht < 6, f'{gebraucht:.1f} s — der Timeout griff nicht je Aufruf'
 
 

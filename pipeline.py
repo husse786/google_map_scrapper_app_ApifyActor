@@ -45,6 +45,16 @@ TAKT_SEKUNDEN = 0.2
 # und ein Lauf voller ③ sähe aus wie ein Ergebnis, obwohl er keines ist.
 MAX_FEHLSCHLAEGE_HINTEREINANDER = 10
 
+# Was der Sachbearbeiter liest, wenn die Datenquelle nicht rechtzeitig
+# antwortet. Seit 03_ENTSCHEIDUNGEN.md C (geändert nach Phase 7 v1.2) ist eine
+# Zeitüberschreitung kein leeres Ergebnis: die Frage wurde nicht beantwortet,
+# also darf daraus keine Aussage über den Kunden werden.
+ZEITUEBERSCHREITUNG_MELDUNG = (
+    'Die Datenquelle hat mehrfach hintereinander nicht rechtzeitig geantwortet. '
+    'Der Lauf wurde gestoppt, damit keine Kunden fälschlich als «nichts '
+    'gefunden» gelten. Bitte es später noch einmal versuchen und den Lauf '
+    'fortsetzen — die bereits verarbeiteten Kunden bleiben erhalten.')
+
 # Pflichtspalten je Modus (02_DATENVERTRAG.md §1)
 PFLICHTSPALTEN = ('SearchString', 'PLZ', 'KundenNr')
 PFLICHTSPALTEN_JE_MODUS = {
@@ -442,8 +452,16 @@ class Lauf:
 
         Die Grenze gilt je Aufruf und für jeden Provider, nicht nur für Apify:
         ein Aufruf, der nicht zurückkommt, darf einen Lauf über 2'500 Kunden
-        nicht blockieren. Zeitüberschreitung wird wie ein leeres Ergebnis
-        behandelt, ohne Retry (03_ENTSCHEIDUNGEN.md C).
+        nicht blockieren.
+
+        Eine Zeitüberschreitung wird wie ein Netzfehler behandelt und zählt zu
+        den zehn hintereinander, ohne Retry (03_ENTSCHEIDUNGEN.md C, geändert
+        nach Phase 7 v1.2). Sie ist **kein leeres Ergebnis**: die Frage wurde
+        nicht beantwortet. Im Modus B würde daraus sonst die Aussage, der Kunde
+        sei bei Google gelöscht — dieselbe Unwahrheit, die K2 behoben hat.
+
+        Der Abbruch durch den Nutzer bleibt davon unberührt: er liefert `None`
+        und ist keine Zeitüberschreitung.
         """
         ausfuehrer = ThreadPoolExecutor(max_workers=1)
         auftrag = ausfuehrer.submit(aufruf)
@@ -456,10 +474,11 @@ class Lauf:
                 if rest <= 0:
                     logger.warning(f'Keine Antwort innerhalb von '
                                    f'{self.timeout_sekunden} Sekunden für '
-                                   f'"{bezeichnung}", wird als leeres Ergebnis '
-                                   f'behandelt.')
+                                   f'"{bezeichnung}". Zählt als Fehlschlag, '
+                                   f'nicht als leeres Ergebnis.')
                     auftrag.cancel()
-                    return None
+                    raise QuelleNichtVerfuegbar(ZEITUEBERSCHREITUNG_MELDUNG,
+                                                endgueltig=False)
                 try:
                     return auftrag.result(timeout=min(TAKT_SEKUNDEN, rest))
                 except FutureTimeout:

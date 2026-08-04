@@ -181,29 +181,38 @@ def test_timeout_standard_ist_180_sekunden():
     assert ApifyProvider('x', 'y').wartezeit == 175
 
 
-def test_haengender_provider_endet_in_datei_drei(tmp_path):
+def test_haengender_provider_blockiert_den_lauf_nicht(tmp_path):
     """
-    Ein Provider, der nicht antwortet, darf den Lauf nicht blockieren. Der Kunde
-    landet in ③, ohne Retry. Hier mit einem Bruchteil einer Sekunde statt
-    neunzig, damit die Testsuite schnell bleibt; der Lauf mit den echten
-    180 Sekunden steht in test_timeout_mit_echten_180_sekunden.
+    Ein Provider, der nicht antwortet, darf den Lauf nicht blockieren.
+
+    Geändert in Phase 7 v1.3. Vorher landeten hier alle zehn Kunden in ③ und
+    der Lauf meldete `FERTIG`. Seit `03_ENTSCHEIDUNGEN.md C` zählt eine
+    Zeitüberschreitung wie ein Netzfehler: die Fixture hat genau zehn Kunden,
+    also ist nach dem zehnten Fehlschlag Schluss. Ein Lauf voller ③ sah aus wie
+    ein Ergebnis, obwohl keine einzige Frage beantwortet wurde.
+
+    Was der Test unverändert nachweist: der Timeout greift, der Lauf hängt
+    nicht, und es wird nicht wiederholt. Hier mit einem Bruchteil einer Sekunde
+    statt hundertachtzig, damit die Testsuite schnell bleibt; der Lauf mit dem
+    echten Wert steht in test_timeout_mit_echten_180_sekunden.
     """
     provider = SchlafenderProvider(sekunden=5)
     ziel = tmp_path / 'ergebnis'
 
     beginn = time.monotonic()
     with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
-        Lauf(provider, datenbank, timeout_sekunden=0.3).ausfuehren(
+        ergebnis = Lauf(provider, datenbank, timeout_sekunden=0.3).ausfuehren(
             eingabedatei_aus_fixture(tmp_path), str(ziel))
+        job = datenbank.job_lesen(ergebnis['job_id'])
     gebraucht = time.monotonic() - beginn
 
-    nicht_moeglich = lies(ziel / OUTPUT_FILES['nicht_moeglich'])
-    assert len(nicht_moeglich) == 10
-    assert set(nicht_moeglich['qualitaet']) == {'NICHT_MOEGLICH (kein Ergebnis)'}
-    assert lies(ziel / OUTPUT_FILES['fertig_fuer_erp']).empty
+    assert ergebnis['status'] == 'FEHLER'
+    assert not ziel.exists(), 'ein gestoppter Lauf schreibt keine Ausgabedateien'
+    assert 'nicht rechtzeitig geantwortet' in job['fehlermeldung']
 
-    # Kein Retry: ein Aufruf je Kunde.
-    assert provider.aufrufe == 10
+    # Kein Retry: höchstens ein Aufruf je Kunde, und nach dem zehnten
+    # Fehlschlag hört der Lauf auf zu fragen.
+    assert provider.aufrufe <= 10
     # Zehn Kunden mit je 0.3 s Geduld — weit unter den 50 s, die ohne Timeout
     # nötig wären.
     assert gebraucht < 15, f'{gebraucht:.1f} s gebraucht, Timeout griff nicht'
