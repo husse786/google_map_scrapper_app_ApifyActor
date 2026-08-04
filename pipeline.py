@@ -305,8 +305,13 @@ class Lauf:
             self._fehlschlaege += 1
             if self._fehlschlaege >= MAX_FEHLSCHLAEGE_HINTEREINANDER:
                 raise QuelleNichtVerfuegbar(fehler.meldung) from fehler
-            logger.warning(f'Abfrage gescheitert ({self._fehlschlaege} '
-                           f'hintereinander): {fehler.meldung}')
+            # Nur die Tatsache ins Protokoll — die Meldung für den Nutzer
+            # spricht davon, dass der Lauf gestoppt wurde, und das stimmt erst
+            # beim zehnten Mal.
+            logger.warning(f'Abfrage gescheitert, {self._fehlschlaege} von '
+                           f'{MAX_FEHLSCHLAEGE_HINTEREINANDER} hintereinander. '
+                           f'Dieser Kunde gilt als ohne Ergebnis, der Lauf '
+                           f'macht weiter.')
             return []
 
         self._fehlschlaege = 0
