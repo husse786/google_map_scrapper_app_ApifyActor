@@ -1,0 +1,58 @@
+{% extends "grundgeruest.html" %}
+{% block inhalt %}
+
+{% if offener_lauf %}
+<section class="karte hinweis-karte">
+  <h1>Ein Auftrag ist noch offen</h1>
+  <p>
+    Der Auftrag Nummer {{ offener_lauf.id }} zur Datei
+    «{{ offener_lauf.dateiname }}» wurde unterbrochen — vermutlich weil das
+    Programm beendet wurde. {{ zahl(offener_lauf.kunden_erledigt) }} von
+    {{ zahl(offener_lauf.kunden_total) }} Kunden sind bereits verarbeitet und
+    gespeichert.
+  </p>
+  <form method="post" action="/fortsetzen">
+    <button class="knopf gross" type="submit" autofocus>Auftrag fortsetzen</button>
+  </form>
+  <p class="klein">
+    Es wird kein Kunde doppelt gesucht. Solange dieser Auftrag offen ist, lässt
+    sich kein neuer starten.
+  </p>
+</section>
+{% else %}
+<section class="karte">
+  <h1>Was haben Sie zu den Kunden?</h1>
+  <p class="fuehrung">
+    Davon hängt ab, welche Datei Sie hochladen. Wenn Sie unsicher sind: die
+    obere Variante passt fast immer.
+  </p>
+
+  <div class="wahl">
+    <form method="get" action="/datei" class="wahl-form">
+      <input type="hidden" name="modus" value="A">
+      <button class="kachel" type="submit" autofocus>
+        <span class="kachel-titel">Erstanreicherung</span>
+        <span class="kachel-unter">Nur Name und Adresse</span>
+        <span class="kachel-text">
+          Wir suchen jeden Kunden auf Google Maps und entscheiden, welcher
+          Treffer der richtige ist.
+        </span>
+        <span class="kachel-spalten">SearchString ; PLZ ; Stadt ; KundenNr</span>
+      </button>
+    </form>
+
+    <div class="kachel gesperrt" aria-disabled="true">
+      <span class="kachel-titel">Auffrischen</span>
+      <span class="kachel-unter">Google-ID ist schon im ERP</span>
+      <span class="kachel-text">
+        Wir holen die aktuellen Daten direkt über die gespeicherte ID.
+        Kein Suchen, kein Raten.
+      </span>
+      <span class="kachel-spalten">placeId ; lat ; lng ; KundenNr</span>
+      <span class="kachel-sperrhinweis">Noch nicht verfügbar.</span>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

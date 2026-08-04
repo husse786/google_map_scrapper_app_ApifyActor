@@ -1,0 +1,19 @@
+{% extends "grundgeruest.html" %}
+{% block inhalt %}
+
+<section class="karte">
+  {% include "lauf_stand.html" %}
+
+  <p class="klein ruhe">
+    Sie können dieses Fenster schliessen — der Lauf geht weiter.
+    Öffnen Sie die Seite später wieder, um den Stand zu sehen.
+  </p>
+
+  {% if not stand.fertig %}
+  <form method="post" action="/lauf/{{ job_id }}/abbrechen">
+    <button class="knopf leise" type="submit">Lauf abbrechen</button>
+  </form>
+  {% endif %}
+</section>
+
+{% endblock %}

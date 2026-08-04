@@ -1,0 +1,23 @@
+{% extends "grundgeruest.html" %}
+{% block titel %}Da ist etwas schiefgegangen{% endblock %}
+{% block inhalt %}
+
+<section class="karte">
+  <h1>{{ ueberschrift }}</h1>
+  <p class="fuehrung">{{ erklaerung }}</p>
+
+  {% if rat %}
+  <p>{{ rat }}</p>
+  {% endif %}
+
+  <div class="knopfreihe">
+    <a class="knopf gross" href="/" autofocus>Zurück zum Anfang</a>
+  </div>
+
+  <p class="klein">
+    Falls das wieder passiert: Die technischen Einzelheiten stehen im Protokoll
+    unter <code>logs/webapp.log</code>. Diese Datei hilft bei der Fehlersuche.
+  </p>
+</section>
+
+{% endblock %}

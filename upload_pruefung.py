@@ -2,13 +2,21 @@
 # Prüft eine hochgeladene Datei, bevor der Lauf startet (03_ENTSCHEIDUNGEN.md D).
 #
 # Der Zweck ist eine einzige Frage: Was wird an dieser Datei schiefgehen, und
-# zwar bevor jemand zwei Stunden darauf wartet. Von 5'188 Prüfzeilen der
-# Batches 1 bis 4 waren 4'288 „keine Strassentreffer" — verursacht durch Werte
-# wie `KST 715611 0` im Strassenfeld. Diese Zeilen sind vor dem Lauf erkennbar.
+# zwar bevor der Lauf beginnt.
 #
-# Die drei Prüfungen aus 03_ENTSCHEIDUNGEN.md D **warnen**, sie blockieren
-# nicht. Der Nutzer entscheidet, ob er trotzdem läuft. Abgewiesen wird allein
-# eine Datei über der Zeilenobergrenze (03_ENTSCHEIDUNGEN.md C).
+# Zur Wirkung: Die Messung in Phase 4 hat die ursprüngliche Erwartung widerlegt.
+# Auf zwei realen Batches trafen die beiden inhaltlichen Prüfungen 14 und 11
+# Zeilen von je 2'513 — die Prüffälle entstehen fast alle woanders. Die
+# Prüfungen bleiben trotzdem: sie kosten nichts und melden echte Eingabefehler.
+#
+# Zwei der drei Prüfungen aus 03_ENTSCHEIDUNGEN.md D **warnen**: der Nutzer
+# entscheidet, ob er trotzdem läuft.
+#
+# Abgewiesen wird in zwei Fällen:
+#   - eine fehlende Pflichtspalte (03_ENTSCHEIDUNGEN.md D, geändert nach
+#     Phase 4). Ohne SearchString, PLZ oder KundenNr kann der Lauf nicht
+#     arbeiten — eine wegklickbare Warnung führt nur in eine Sackgasse.
+#   - eine Datei über der Zeilenobergrenze (03_ENTSCHEIDUNGEN.md C).
 
 import logging
 import re
@@ -97,7 +105,7 @@ class Pruefbericht:
 
     @property
     def start_moeglich(self) -> bool:
-        """Nur die Zeilenobergrenze verhindert den Start."""
+        """Fehlende Pflichtspalte und Zeilenobergrenze verhindern den Start."""
         return not any(b.schwere == ABWEISUNG for b in self.befunde)
 
     @property
@@ -268,7 +276,7 @@ def _pruefe_pflichtspalten(df: pd.DataFrame, rohzeilen: list,
     welche = ', '.join(f'«{spalte}»' for spalte in fehlend)
     kopfzeile = rohzeilen[0].strip() if rohzeilen else ''
     bericht.befunde.append(Befund(
-        art='pflichtspalten', schwere=HINWEIS, anzahl=len(df),
+        art='pflichtspalten', schwere=ABWEISUNG, anzahl=len(df),
         meldung=(f'In der Datei fehlt die Spalte {welche}. '
                  f'Die erste Zeile muss so aussehen: {KOPFZEILE_VORLAGE}'),
         beispiel_zeile=kopfzeile, zeilennummer=1))

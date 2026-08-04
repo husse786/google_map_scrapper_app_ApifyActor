@@ -32,3 +32,6 @@ Daten/
 # SQLite-Datenbanken der Laeufe
 *.sqlite
 *.sqlite-journal
+
+# Laufdaten der Webapp (Uploads, Ergebnisse, Datenbank)
+laufdaten/

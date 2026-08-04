@@ -27,6 +27,7 @@ google-maps-scraper-app/
 │
 ├── cli.py                \# Kommandozeile: Lauf und Bereinigung
 │
+├── webapp.py             \# Die Weboberfläche (FastAPI, Jinja2, HTMX)
 ├── upload\_pruefung.py    \# Prüft die Eingabedatei, bevor der Lauf startet
 ├── worker.py             \# Der Lauf im Hintergrund: starten, abbrechen, fortsetzen
 ├── pipeline.py           \# Ein Lauf: Eingabe → Provider → Datenbank → drei Dateien
@@ -38,8 +39,6 @@ google-maps-scraper-app/
 ├── csv\_processor.py      \# Liest und validiert die initiale CSV-Datei
 ├── csv\_postprocessor.py  \# Filtert die Ergebnisse auf die gewünschten Spalten
 ├── data\_cleaner.py       \# Bereinigt Duplikate mit dem Scoring-Modell
-│
-├── apify\_wrapper.py      \# Kapselt die gesamte API-Kommunikation mit Apify
 │
 ├── logger\_config.py      \# Konfiguriert das Logging-System
 └── config.py             \# Speichert Konfigurationen (API-Token, Spaltenlisten etc.)
@@ -105,9 +104,37 @@ Diese Anleitung beschreibt, wie das Projekt von Grund auf eingerichtet wird.
 Stelle sicher, dass deine virtuelle Umgebung (`venv`) aktiv ist.
 
 > **Hinweis zum laufenden Umbau (Branch `umbau/webapp`):** Das Tkinter-Fenster
-> (`main.py`, `ui_manager.py`) ist entfallen. Die Bedienung im Browser kommt in
-> Phase 5, der Hintergrundlauf mit Wiederaufnahme in Phase 3. Bis dahin läuft
-> alles über die Kommandozeile.
+> (`main.py`, `ui_manager.py`) ist entfallen und durch die Weboberfläche
+> ersetzt. Die Kommandozeile bleibt für Wartung und Fehlersuche.
+
+## Bedienung im Browser
+
+```bash
+python webapp.py
+```
+
+Dann im Browser `http://localhost:8000` öffnen. Vier Seiten führen durch den
+Ablauf: Art wählen, Datei hochladen, Lauf beobachten, Ergebnis herunterladen.
+
+Das Fenster darf jederzeit geschlossen werden — der Lauf geht weiter. Wird das
+Programm mitten im Lauf beendet, bietet die Startseite beim nächsten Mal die
+Fortsetzung an; kein Kunde wird doppelt gesucht.
+
+Damit Kolleginnen und Kollegen im Firmennetz zugreifen können:
+
+```bash
+python webapp.py --offen
+```
+
+Zum Üben ohne Apify-Kosten mit festen Antworten:
+
+```bash
+python webapp.py --antworten agent/testdaten/fixture_optimierte_daten.csv
+```
+
+Für den Produktivlauf über Apify: `python webapp.py --quelle apify`
+
+## Bedienung über die Kommandozeile
 
 ### Schritt 0: Die Datei vorher prüfen
 
@@ -123,8 +150,9 @@ Gemeldet werden fehlende Spalten, Zeilen ohne Strassennamen im Strassenfeld
 (`Boucherie`, `Lebensmittelgeschäft`). Jede Meldung nennt die Anzahl und eine
 Beispielzeile mit ihrer Nummer, damit sie sich in Excel wiederfinden lässt.
 
-Diese drei Hinweise **blockieren nicht** — du entscheidest, ob du trotzdem
-läufst. Abgewiesen wird nur eine Datei mit mehr als 10'000 Zeilen.
+Die beiden inhaltlichen Hinweise **blockieren nicht** — du entscheidest, ob du
+trotzdem läufst. Abgewiesen wird eine Datei mit einer fehlenden Pflichtspalte
+oder mit mehr als 10'000 Zeilen.
 
 ### Schritt 1: Anreichern und auswerten in einem Lauf
 

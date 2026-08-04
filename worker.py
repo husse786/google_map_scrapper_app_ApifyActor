@@ -49,12 +49,16 @@ class Worker:
     # ------------------------------------------------------------------
 
     def starten(self, eingabe_pfad: str, ausgabe_ordner: str = None,
-                email: str = None) -> int:
+                email: str = None, kunden_total: int = 0) -> int:
         """
         Startet einen neuen Lauf im Hintergrund und kehrt sofort zurück.
 
         Läuft bereits einer, wird der Start mit einem Hinweis abgewiesen —
         auch dann, wenn der andere Lauf aus einem früheren Programmstart stammt.
+
+        `kunden_total` ist die Zahl, die der Aufrufer schon kennt — die
+        Statusanzeige soll nicht eine Sekunde lang „0 von 0" zeigen. Der Lauf
+        setzt sie gleich darauf auf den verbindlichen Wert.
         """
         with _START_SPERRE:
             self._pruefen_ob_frei()
@@ -62,6 +66,7 @@ class Worker:
             # zweiter Start in der Lücke dazwischen durchrutschen.
             with Datenbank(self.datenbank_pfad) as datenbank:
                 job_id = datenbank.job_anlegen('A', Path(eingabe_pfad).name,
+                                               kunden_total=kunden_total,
                                                email=email)
                 datenbank.status_setzen(job_id, 'LAEUFT')
             self._starten(job_id, eingabe_pfad, ausgabe_ordner)

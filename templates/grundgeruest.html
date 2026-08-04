@@ -1,0 +1,35 @@
+{# Gemeinsamer Rahmen aller Seiten. Aufbau und Texte nach agent/webapp_prototyp.html. #}
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titel %}Kundendaten anreichern{% endblock %}</title>
+  <link rel="stylesheet" href="/static/stil.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="kopf">
+    <div class="kopf-inhalt">
+      <div>
+        <div class="marke">Kundendaten anreichern</div>
+        <div class="unterzeile">Google Maps → ERP</div>
+      </div>
+      <ol class="schritte" aria-label="Ablauf">
+        {% set schritte = [('art', 'Art wählen'), ('datei', 'Datei'),
+                           ('lauf', 'Lauf'), ('ergebnis', 'Ergebnis')] %}
+        {% for schluessel, beschriftung in schritte %}
+          <li class="schritt {% if schritt == schluessel %}jetzt{% endif %}"
+              {% if schritt == schluessel %}aria-current="step"{% endif %}>
+            {{ beschriftung }}
+          </li>
+        {% endfor %}
+      </ol>
+    </div>
+  </header>
+
+  <main class="inhalt">
+    {% block inhalt %}{% endblock %}
+  </main>
+</body>
+</html>

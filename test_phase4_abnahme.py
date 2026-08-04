@@ -94,7 +94,10 @@ def test_fehlende_pflichtspalte_meldet_deutsch(tmp_path):
 
     befund = bericht.befund('pflichtspalten')
     assert befund is not None
-    assert befund.schwere == HINWEIS
+    # Geändert nach Phase 4 (03_ENTSCHEIDUNGEN.md D): eine fehlende
+    # Pflichtspalte blockiert, sie warnt nicht mehr nur.
+    assert befund.schwere == ABWEISUNG
+    assert bericht.start_moeglich is False
     assert 'KundenNr' in befund.meldung
     assert 'SearchString;PLZ;Stadt;KundenNr' in befund.meldung
     assert befund.zeilennummer == 1
@@ -126,8 +129,9 @@ def test_cli_meldet_fehlende_spalte_ohne_stacktrace(tmp_path, capsys):
     code = cli.main(['pruefen', str(quelle)])
     ausgabe = capsys.readouterr().out
 
-    assert code == 0  # ein Hinweis blockiert nicht
+    assert code == 1  # fehlende Pflichtspalte blockiert
     assert 'PLZ' in ausgabe and 'KundenNr' in ausgabe
+    assert 'nicht gestartet' in ausgabe or 'nicht gestartet werden' in ausgabe
     assert 'Traceback' not in ausgabe
 
 

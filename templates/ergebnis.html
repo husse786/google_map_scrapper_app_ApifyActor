@@ -1,0 +1,33 @@
+{% extends "grundgeruest.html" %}
+{% block inhalt %}
+
+<section class="karte">
+  <h1>{{ ueberschrift }}</h1>
+  <p class="fuehrung">{{ zusammenfassung }}</p>
+
+  {% if dateien %}
+  <div class="ergebnis-kacheln">
+    {% for datei in dateien %}
+    <div class="ergebniskachel">
+      <h2>{{ datei.titel }}</h2>
+      <p class="kachel-text">{{ datei.text }}</p>
+      <p class="zahl gross">{{ zahl(datei.kunden) }}</p>
+      <p class="bez">Kunden</p>
+      <a class="knopf" href="/ergebnis/{{ job_id }}/datei/{{ datei.schluessel }}"
+         download>Herunterladen</a>
+    </div>
+    {% endfor %}
+  </div>
+
+  <p class="klein">
+    Geprüfte Zeilen aus <em>Zur Prüfung</em> können Sie später wieder
+    hochladen — sie werden dann in die ERP-Datei übernommen.
+  </p>
+  {% endif %}
+
+  <div class="knopfreihe">
+    <a class="knopf gross" href="/">Neuen Lauf starten</a>
+  </div>
+</section>
+
+{% endblock %}

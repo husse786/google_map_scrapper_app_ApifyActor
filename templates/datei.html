@@ -1,0 +1,84 @@
+{% extends "grundgeruest.html" %}
+{% block inhalt %}
+
+<section class="karte">
+  <h1>Datei hochladen</h1>
+
+  {% if not bericht %}
+  {# Der native Datei-Knopf beschriftet sich selbst — in der Sprache des
+     Browsers, also oft englisch («Choose File», «No file chosen»). Deshalb
+     liegt er unsichtbar hinter einer eigenen Beschriftung. Bedienung und
+     Tastaturzugang bleiben die des echten Feldes. #}
+  <form method="post" action="/datei" enctype="multipart/form-data" class="hochladen">
+    <div class="feld">
+      <span class="feld-titel">CSV-Datei auswählen</span>
+      <span class="feld-unter">Trennzeichen Semikolon</span>
+      <input type="file" id="datei" name="datei" accept=".csv,text/csv"
+             required autofocus class="datei-eingabe">
+      <label class="knopf leise" for="datei">Datei auswählen</label>
+      <span id="dateiname" class="feld-unter" role="status" aria-live="polite">
+        Noch keine Datei ausgewählt
+      </span>
+    </div>
+    <button class="knopf gross" type="submit">Datei prüfen</button>
+  </form>
+
+  <script>
+    // Zeigt den gewählten Dateinamen auf Deutsch an.
+    document.getElementById('datei').addEventListener('change', function (e) {
+      var datei = e.target.files[0];
+      document.getElementById('dateiname').textContent =
+        datei ? 'Ausgewählt: ' + datei.name : 'Noch keine Datei ausgewählt';
+    });
+  </script>
+
+  <p class="klein">
+    <strong>Die Kundennummer wird nicht für die Suche verwendet.</strong>
+    Google kennt Ihre Kundennummern nicht. Sie werden unverändert mitgeführt,
+    damit Sie die Ergebnisse beim Import ins ERP wieder zuordnen können.
+  </p>
+  {% endif %}
+
+  {% if bericht %}
+  <div class="datei-kopf">
+    <strong>{{ bericht.dateiname }}</strong>
+    <span>· {{ zahl(bericht.kunden) }} Kunden erkannt</span>
+    {% if not bericht.befund('pflichtspalten') %}<span>· Spalten vollständig</span>{% endif %}
+  </div>
+
+  {% for befund in bericht.befunde %}
+  <div class="{% if befund.schwere == 'abweisung' %}fehlerbox{% else %}warnbox{% endif %}">
+    <p class="warn-titel">{{ befund.meldung }}</p>
+    {% if befund.beispiel_zeile %}
+    <p class="warn-beispiel">
+      Beispiel Zeile {{ zahl(befund.zeilennummer) }}:
+      <code>{{ befund.beispiel_zeile }}</code>
+    </p>
+    {% endif %}
+    {% if befund.art == 'kostenstelle' or befund.art == 'kategorietitel' %}
+    <p class="warn-folge">
+      Diese Kunden landen voraussichtlich in <em>Zur Prüfung</em>. Sie können
+      sie vorher im ERP korrigieren oder trotzdem starten.
+    </p>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="knopfreihe">
+    {% if bericht.start_moeglich %}
+    <form method="post" action="/starten">
+      <button class="knopf gross" type="submit" autofocus>Lauf starten</button>
+    </form>
+    {% endif %}
+    <a class="knopf leise" href="/datei?modus=A">Andere Datei wählen</a>
+  </div>
+
+  {% if not bericht.start_moeglich %}
+  <p class="klein">
+    Bitte die Datei anpassen und erneut hochladen.
+  </p>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% endblock %}

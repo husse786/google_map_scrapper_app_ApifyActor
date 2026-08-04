@@ -235,6 +235,24 @@ class Datenbank:
         return [dict(z) for z in self.verbindung.execute(
             'SELECT * FROM kunde WHERE job_id = ? ORDER BY id', (job_id,))]
 
+    def ergebnis_zaehlen(self, job_id: int) -> dict:
+        """Wie viele Kunden bisher in welcher der drei Dateien gelandet sind."""
+        zeilen = self.verbindung.execute(
+            'SELECT ergebnis, COUNT(*) AS anzahl FROM kunde WHERE job_id = ? '
+            'GROUP BY ergebnis', (job_id,))
+        gezaehlt = {wert: 0 for wert in ERGEBNISSE}
+        for zeile in zeilen:
+            if zeile['ergebnis'] in gezaehlt:
+                gezaehlt[zeile['ergebnis']] = zeile['anzahl']
+        return gezaehlt
+
+    def zuletzt_verarbeitet(self, job_id: int) -> dict:
+        """Der Kunde, der zuletzt entschieden wurde — für die Statusanzeige."""
+        zeile = self.verbindung.execute(
+            'SELECT kunden_nr, search_string, ergebnis, qualitaet FROM kunde '
+            'WHERE job_id = ? ORDER BY id DESC LIMIT 1', (job_id,)).fetchone()
+        return dict(zeile) if zeile else None
+
     # ------------------------------------------------------------------
     # Kandidaten
     # ------------------------------------------------------------------

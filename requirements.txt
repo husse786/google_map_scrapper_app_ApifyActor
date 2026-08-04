@@ -4,4 +4,9 @@ apify-client
 thefuzz
 python-levenshtein
 python-dotenv
+fastapi
+uvicorn
+jinja2
+python-multipart
 pytest
+httpx

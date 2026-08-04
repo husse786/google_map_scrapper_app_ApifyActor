@@ -1,0 +1,181 @@
+/* stil.css — schlicht und kontrastreich. Der Prototyp ist für CSS nicht
+   verbindlich; verbindlich sind Ablauf, Texte und Reihenfolge.
+   Wichtig sind zwei Dinge: gut lesbar, und der Tastaturfokus immer sichtbar. */
+
+:root {
+  --text: #16202a;
+  --leise: #5a6b7b;
+  --linie: #d7dee5;
+  --flaeche: #ffffff;
+  --hintergrund: #f4f6f8;
+  --akzent: #1a5fb4;
+  --akzent-dunkel: #14488a;
+  --warnung: #8a5300;
+  --warnung-flaeche: #fff6e5;
+  --fehler: #a01b1b;
+  --fehler-flaeche: #fdeceb;
+  --gut: #1c6b3c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--hintergrund);
+}
+
+/* --- Tastatur: der Fokus muss immer sichtbar sein --- */
+:focus-visible {
+  outline: 3px solid var(--akzent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* --- Kopf --- */
+.kopf { background: var(--flaeche); border-bottom: 1px solid var(--linie); }
+.kopf-inhalt {
+  max-width: 62rem; margin: 0 auto; padding: 1rem 1.5rem;
+  display: flex; flex-wrap: wrap; gap: 1rem;
+  align-items: center; justify-content: space-between;
+}
+.marke { font-weight: 700; font-size: 1.15rem; }
+.unterzeile { color: var(--leise); font-size: 0.9rem; }
+
+.schritte { display: flex; gap: 0.4rem; list-style: none; margin: 0; padding: 0; }
+.schritt {
+  font-size: 0.85rem; color: var(--leise);
+  padding: 0.25rem 0.7rem; border: 1px solid var(--linie); border-radius: 999px;
+}
+.schritt.jetzt {
+  color: var(--flaeche); background: var(--akzent); border-color: var(--akzent);
+  font-weight: 600;
+}
+
+/* --- Inhalt --- */
+.inhalt { max-width: 62rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+.karte {
+  background: var(--flaeche); border: 1px solid var(--linie);
+  border-radius: 10px; padding: 2rem;
+}
+.hinweis-karte { border-left: 6px solid var(--warnung); }
+
+h1 { font-size: 1.6rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.1rem; margin: 0 0 0.35rem; }
+.fuehrung { color: var(--leise); margin-top: 0; }
+.klein { font-size: 0.9rem; color: var(--leise); }
+.ruhe { margin-top: 1.5rem; }
+.bez { color: var(--leise); font-size: 0.85rem; display: block; }
+
+/* --- Auswahl der Art --- */
+.wahl { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
+.wahl-form { margin: 0; display: flex; }
+.kachel {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  width: 100%; text-align: left;
+  padding: 1.25rem; border: 2px solid var(--linie); border-radius: 10px;
+  background: var(--flaeche); font: inherit; color: inherit; cursor: pointer;
+}
+button.kachel:hover { border-color: var(--akzent); }
+.kachel-titel { font-weight: 700; font-size: 1.1rem; }
+.kachel-unter { color: var(--leise); font-size: 0.9rem; }
+.kachel-text { margin: 0.4rem 0; }
+.kachel-spalten {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem; color: var(--leise);
+  background: var(--hintergrund); padding: 0.4rem 0.6rem; border-radius: 6px;
+}
+.kachel.gesperrt { opacity: 0.55; cursor: default; }
+.kachel-sperrhinweis { font-size: 0.85rem; color: var(--warnung); font-weight: 600; }
+
+/* --- Knöpfe --- */
+.knopf {
+  display: inline-block; font: inherit; font-weight: 600;
+  padding: 0.6rem 1.2rem; border-radius: 8px; cursor: pointer;
+  background: var(--akzent); color: var(--flaeche);
+  border: 2px solid var(--akzent); text-decoration: none;
+}
+.knopf:hover { background: var(--akzent-dunkel); border-color: var(--akzent-dunkel); }
+.knopf.gross { font-size: 1.05rem; padding: 0.75rem 1.6rem; }
+.knopf.leise {
+  background: var(--flaeche); color: var(--akzent); border-color: var(--linie);
+}
+.knopf.leise:hover { border-color: var(--akzent); background: var(--flaeche); }
+.knopfreihe {
+  display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;
+  margin-top: 1.5rem;
+}
+.knopfreihe form { margin: 0; }
+
+/* --- Datei hochladen --- */
+.hochladen { display: flex; flex-direction: column; gap: 1.25rem; align-items: flex-start; }
+.feld {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  border: 2px dashed var(--linie); border-radius: 10px; padding: 1.5rem;
+  width: 100%;
+}
+.feld-titel { font-weight: 600; }
+.feld-unter { color: var(--leise); font-size: 0.9rem; }
+/* Das echte Feld bleibt bedienbar und mit der Tastatur erreichbar, zeigt aber
+   seine eigene, oft englische Beschriftung nicht. Die Beschriftung daneben
+   gehört uns. */
+.datei-eingabe {
+  position: absolute; width: 1px; height: 1px;
+  opacity: 0; overflow: hidden;
+}
+.feld { position: relative; }
+.datei-eingabe:focus-visible + label {
+  outline: 3px solid var(--akzent); outline-offset: 3px;
+}
+.feld label.knopf { margin-top: 0.8rem; align-self: flex-start; cursor: pointer; }
+#dateiname { margin-top: 0.6rem; }
+
+.datei-kopf { margin-bottom: 1rem; }
+.datei-kopf span { color: var(--leise); }
+
+.warnbox, .fehlerbox {
+  border-radius: 8px; padding: 1rem 1.2rem; margin: 1rem 0;
+}
+.warnbox { background: var(--warnung-flaeche); border-left: 5px solid var(--warnung); }
+.fehlerbox { background: var(--fehler-flaeche); border-left: 5px solid var(--fehler); }
+.warn-titel { font-weight: 600; margin: 0 0 0.4rem; }
+.warn-beispiel, .warn-folge { margin: 0.3rem 0 0; font-size: 0.92rem; }
+.warn-beispiel code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88rem; background: rgba(0, 0, 0, 0.05);
+  padding: 0.1rem 0.35rem; border-radius: 4px; overflow-wrap: anywhere;
+}
+
+/* --- Lauf --- */
+.zaehler { font-size: 1.15rem; margin: 0.75rem 0 0.5rem; }
+.zaehler strong { font-size: 2rem; }
+.balken {
+  height: 14px; background: var(--hintergrund);
+  border: 1px solid var(--linie); border-radius: 999px; overflow: hidden;
+}
+.balken-fuellung { height: 100%; background: var(--akzent); transition: width 0.4s; }
+.restzeit { color: var(--leise); margin: 0.6rem 0 1.5rem; }
+
+.kacheln-klein { display: flex; flex-wrap: wrap; gap: 1rem; }
+.zahlkachel {
+  flex: 1 1 8rem; padding: 0.9rem 1rem;
+  border: 1px solid var(--linie); border-radius: 8px; background: var(--hintergrund);
+}
+.zahl { font-size: 1.6rem; font-weight: 700; display: block; }
+.zahl.gross { font-size: 2.2rem; margin: 0.4rem 0 0; }
+.zuletzt { margin-top: 1.25rem; overflow-wrap: anywhere; }
+
+/* --- Ergebnis --- */
+.ergebnis-kacheln {
+  display: grid; gap: 1rem; margin: 1.5rem 0;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.ergebniskachel {
+  border: 1px solid var(--linie); border-radius: 10px; padding: 1.25rem;
+  display: flex; flex-direction: column;
+}
+.ergebniskachel .knopf { margin-top: auto; align-self: flex-start; }
+.ergebniskachel .bez { margin-bottom: 1rem; }

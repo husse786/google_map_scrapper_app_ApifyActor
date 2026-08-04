@@ -1,0 +1,51 @@
+{# Wird alle 5 Sekunden nachgeladen und ersetzt sich selbst.
+   Ist der Lauf zu Ende, schickt die Antwort zusätzlich den Kopf HX-Redirect
+   und der Browser wechselt auf die Ergebnisseite. #}
+<div id="stand"
+     {% if not stand.fertig %}
+     hx-get="/lauf/{{ job_id }}/stand"
+     hx-trigger="every 5s"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+  <h1>{{ stand.ueberschrift }}</h1>
+
+  {% if stand.fertig %}
+  <p>{{ stand.abschlusstext }}</p>
+  <p><a class="knopf gross" href="{{ stand.weiter_zu }}" autofocus>Weiter</a></p>
+
+  {% else %}
+  <p class="zaehler" role="status" aria-live="polite">
+    <strong>{{ zahl(stand.erledigt) }}</strong> von {{ zahl(stand.total) }} Kunden
+  </p>
+
+  <div class="balken" role="img"
+       aria-label="{{ stand.prozent }} von hundert Kunden verarbeitet">
+    <div class="balken-fuellung" style="width: {{ stand.prozent }}%"></div>
+  </div>
+
+  <p class="restzeit">{{ stand.restzeit }}</p>
+
+  <div class="kacheln-klein">
+    <div class="zahlkachel">
+      <span class="zahl">{{ zahl(stand.fertig_anzahl) }}</span>
+      <span class="bez">Fertig</span>
+    </div>
+    <div class="zahlkachel">
+      <span class="zahl">{{ zahl(stand.pruefung_anzahl) }}</span>
+      <span class="bez">Zur Prüfung</span>
+    </div>
+    <div class="zahlkachel">
+      <span class="zahl">{{ zahl(stand.nicht_moeglich_anzahl) }}</span>
+      <span class="bez">Nicht möglich</span>
+    </div>
+  </div>
+
+  {% if stand.zuletzt %}
+  <p class="zuletzt">
+    <span class="bez">Zuletzt verarbeitet</span>
+    {{ stand.zuletzt }}
+  </p>
+  {% endif %}
+  {% endif %}
+</div>
