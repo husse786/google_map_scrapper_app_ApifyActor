@@ -90,6 +90,16 @@ ist **nicht** Teil dieses Umbaus. Nicht anfassen.
 
 ### B4 · Modus B — Plausibilitätsprüfung
 
+**Sperre für den Produktivbetrieb.** Modus B darf erst mit echten Kundendaten
+laufen, wenn ein Live-Abruf gegen die echte Google-API dokumentiert ist. Bis
+dahin ist nur belegt, dass der Code gegen **nachgebildete** Antworten richtig
+arbeitet — nicht, dass eine echte Google-Antwort so aussieht. Dieselbe Lücke
+schlug in Phase 3 zu, als sich der Apify-Aufrufweg änderte.
+
+Ebenfalls offen und ausserhalb der Entwicklung: Zulässigkeit eines privaten
+Gmail-Kontos für Firmendaten, und die Kreditkartenhinterlegung bei Google
+(`UMBAUPLAN_WEBAPP.md` §8). Beides blockiert den Betrieb, nicht den Bau.
+
 | Fall | Ergebnis |
 |---|---|
 | `permanentlyClosed` = wahr | ② `PRUEFUNG (geschlossen)` |
@@ -97,6 +107,9 @@ ist **nicht** Teil dieses Umbaus. Nicht anfassen.
 | `lat`/`lng` fehlen in der Eingabe | keine Distanzprüfung, kein Prüffall |
 | placeId liefert nichts | ③ `NICHT_MOEGLICH (ID ungueltig)` |
 | Name hat sich geändert | ① — Rebranding ist normal, **kein** Prüffall |
+| `temporarilyClosed` = wahr | ① — vorübergehend geschlossen heisst, der Betrieb besteht weiter. Die Spalte `temporarilyClosed` führt die Information ins ERP mit |
+| geschlossen **und** Standort abweichend | ② `PRUEFUNG (geschlossen)` — geschlossen schlägt Entfernung, es ist die handlungsrelevantere Aussage |
+| Entfernung genau 200 m | ① — der Vertrag sagt „> 200 m" |
 
 Distanz per Haversine. 200 m trennt „anderes Gebäude" von GPS-Ungenauigkeit
 und Eingangs-versus-Gebäudemitte.
@@ -108,6 +121,7 @@ und Eingangs-versus-Gebäudemitte.
 | Grenze | Wert | Zweck |
 |---|---|---|
 | Timeout pro API-Aufruf | **180 Sekunden** | fehlt heute völlig; hängender Lauf blockiert unbegrenzt. Von 90 s heraufgesetzt: gemessene Kaltstarts lagen bei 83, 87 und **91** Sekunden — 90 s hätte gesunde Aufrufe fälschlich nach ③ geschoben. Der Timeout soll Hänger stoppen, nicht Tempo erzwingen |
+| Timeout Google Place Details | **30 Sekunden** | (Ergänzt nach Phase 6.) Ein Direktabruf über die ID ist kein Actor, der eine Suche fährt — er antwortet in Sekundenbruchteilen. 180 s wären hier kein Schutz, sondern eine Blockade |
 | Verhalten bei Timeout | wie leeres Ergebnis → ③ | kein Retry, kein Zusatzkosten |
 | Parallele Worker (Apify) | **6** | produktiv getestet, stabil |
 | Maximale Zeilen pro Upload | **10'000** | Schutz vor versehentlichem Kontingentverbrauch |
@@ -165,9 +179,10 @@ Nicht bauen, auch nicht „vorbereitend", auch nicht als Schnittstelle:
 - WebSockets — Statusseite pollt alle 5 Sekunden
 - React, Vue, npm, Build-Pipeline
 - Docker (kommt frühestens beim Serverumzug)
-- ~~Prüfmaske im Browser~~ — **wird gebaut.** Die Messung aus Phase 4 hat
-  entschieden: nach der Validierung bleiben 713 und 840 Prüffälle je Batch,
-  also 28% und 33% aller Kunden. Über fünf Batches sind das mehrere tausend
-  Fälle. Das ist in Excel nicht handhabbar. Als **Phase 8** aufgenommen.
+- ~~Prüfmaske im Browser~~ — **wird gebaut**, als Phase 8.
+  Grund ist der Ablauf: Datei ② hat keinen Rückweg, der Nutzer hätte zwei
+  ERP-Importe statt einem. Das gilt unabhängig von der Fallzahl.
+  Die Messung aus Phase 4 (713 und 840 Prüffälle je Batch, nicht durch bessere
+  Eingabeprüfung verkleinerbar) bestimmt nur, dass sie früh statt spät kommt.
 - Automatische Wiederholung fehlgeschlagener Aufrufe
 - Mehrsprachigkeit
