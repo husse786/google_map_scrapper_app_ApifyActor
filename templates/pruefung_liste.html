@@ -1,0 +1,84 @@
+{# Phase 8: alle offenen Prüffälle eines Auftrags, einer je Zeile. #}
+{% extends "grundgeruest.html" %}
+{% block titel %}Zur Prüfung — Kundendaten anreichern{% endblock %}
+{% block inhalt %}
+
+<section class="karte">
+  <h1>Zur Prüfung</h1>
+
+  {% if stand.gesamt == 0 %}
+    <p class="fuehrung">
+      In diesem Auftrag gibt es keine Fälle zur Prüfung. Alle Kunden konnten
+      automatisch entschieden werden.
+    </p>
+  {% elif stand.alle_entschieden %}
+    <p class="fuehrung">
+      Alle {{ zahl(stand.gesamt) }} Fälle sind entschieden. Die entschiedenen
+      Kunden stehen jetzt in der Datei <em>Fertig fürs ERP</em>.
+    </p>
+  {% else %}
+    <p class="fuehrung">
+      Hier entscheiden Sie die Fälle, die der Abgleich nicht eindeutig lösen
+      konnte. Jeder entschiedene Fall wandert sofort in die Datei
+      <em>Fertig fürs ERP</em> — Sie können jederzeit aufhören und später
+      weitermachen.
+    </p>
+  {% endif %}
+
+  {% if stand.gesamt %}
+  <p class="zaehler">
+    <strong>{{ zahl(stand.entschieden) }}</strong> von {{ zahl(stand.gesamt) }}
+    entschieden
+  </p>
+  <div class="balken" role="progressbar" aria-valuenow="{{ stand.prozent }}"
+       aria-valuemin="0" aria-valuemax="100"
+       aria-label="Fortschritt der Prüfung">
+    <div class="balken-fuellung" style="width: {{ stand.prozent }}%"></div>
+  </div>
+  {% endif %}
+
+  {% if faelle %}
+  <div class="knopfreihe">
+    <a class="knopf gross" href="/pruefung/{{ job_id }}/fall/{{ faelle[0].kunde_id }}">
+      {% if stand.entschieden %}Weiter prüfen{% else %}Prüfung beginnen{% endif %}
+    </a>
+  </div>
+
+  <table class="fallliste">
+    <caption class="klein">
+      {{ zahl(faelle|length) }} offene Fälle. Der Grund sagt, warum der Abgleich
+      nicht entscheiden konnte.
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">KundenNr</th>
+        <th scope="col">Kunde</th>
+        <th scope="col">Grund</th>
+        <th scope="col">Treffer</th>
+        <th scope="col"><span class="nurlesen">Entscheiden</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for fall in faelle %}
+      <tr>
+        <td>{{ fall.kunden_nr }}</td>
+        <td>{{ fall.bezeichnung }}</td>
+        <td class="klein">{{ fall.grund }}</td>
+        <td>{{ fall.treffer }}</td>
+        <td>
+          <a href="/pruefung/{{ job_id }}/fall/{{ fall.kunde_id }}">
+            Entscheiden<span class="nurlesen"> — Kunde {{ fall.kunden_nr }}</span>
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <div class="knopfreihe">
+    <a class="knopf leise" href="/ergebnis/{{ job_id }}">Zurück zum Ergebnis</a>
+  </div>
+</section>
+
+{% endblock %}

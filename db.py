@@ -300,3 +300,66 @@ class Datenbank:
             'SELECT COUNT(*) AS anzahl FROM kandidat WHERE kunde_id IN '
             '(SELECT id FROM kunde WHERE job_id = ?)', (job_id,)).fetchone()
         return zeile['anzahl']
+
+    # ------------------------------------------------------------------
+    # Prüfmaske (Phase 8)
+    # ------------------------------------------------------------------
+
+    def kunde_lesen(self, kunde_id: int) -> dict:
+        zeile = self.verbindung.execute(
+            'SELECT * FROM kunde WHERE id = ?', (kunde_id,)).fetchone()
+        return dict(zeile) if zeile else None
+
+    def pruefaelle_lesen(self, job_id: int) -> list:
+        """
+        Die Kunden eines Jobs, die noch auf eine Entscheidung warten.
+
+        Reihenfolge wie sie verarbeitet wurden — damit die Liste sich zwischen
+        zwei Aufrufen nicht umsortiert, während jemand sie abarbeitet.
+        """
+        return [dict(z) for z in self.verbindung.execute(
+            "SELECT * FROM kunde WHERE job_id = ? AND ergebnis = 'pruefung' "
+            "ORDER BY id", (job_id,))]
+
+    def kunde_entscheiden(self, kunde_id: int, ergebnis: str, qualitaet: str,
+                          grund: str, gewaehlt_id: int = None) -> None:
+        """
+        Hält die Entscheidung eines Menschen über einen Prüffall fest.
+
+        Kunde und Kandidaten in einer Transaktion: ein Kunde, dessen `ergebnis`
+        auf `fertig` steht, während kein Kandidat `gewaehlt` ist, wäre beim
+        nächsten Schreiben der Dateien eine Zeile ohne Treffer in der
+        ERP-Datei. Entweder beides oder nichts.
+
+        `gewaehlt_id` ist `None`, wenn keiner der Vorschläge passt. Dann werden
+        alle Kandidaten abgelehnt und der Kunde geht nach ③.
+        """
+        if ergebnis not in ERGEBNISSE:
+            raise ValueError(f'Unbekanntes Ergebnis "{ergebnis}".')
+
+        try:
+            if gewaehlt_id is not None:
+                gehoert_dazu = self.verbindung.execute(
+                    'SELECT 1 FROM kandidat WHERE id = ? AND kunde_id = ?',
+                    (gewaehlt_id, kunde_id)).fetchone()
+                if not gehoert_dazu:
+                    raise ValueError(
+                        f'Kandidat {gewaehlt_id} gehört nicht zu Kunde {kunde_id}.')
+
+            self.verbindung.execute(
+                "UPDATE kandidat SET entscheid = 'abgelehnt' WHERE kunde_id = ?",
+                (kunde_id,))
+            if gewaehlt_id is not None:
+                # Der Grund steht am Kandidaten, weil die Ausgabezeile ihn von
+                # dort nimmt — eine Zeile je Kandidat, ein Grund je Zeile.
+                self.verbindung.execute(
+                    "UPDATE kandidat SET entscheid = 'gewaehlt', grund = ? "
+                    "WHERE id = ?", (grund, gewaehlt_id))
+
+            self.verbindung.execute(
+                'UPDATE kunde SET ergebnis = ?, qualitaet = ?, grund = ? WHERE id = ?',
+                (ergebnis, qualitaet, grund, kunde_id))
+        except Exception:
+            self.verbindung.rollback()
+            raise
+        self.verbindung.commit()

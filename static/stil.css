@@ -189,3 +189,79 @@ button.kachel:hover { border-color: var(--akzent); }
 }
 .ergebniskachel .knopf { margin-top: auto; align-self: flex-start; }
 .ergebniskachel .bez { margin-bottom: 1rem; }
+
+/* --- Prüfmaske (Phase 8) --- */
+
+/* Für Bildschirmleser da, für das Auge nicht. */
+.nurlesen {
+  position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+
+.fallliste { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
+.fallliste caption { text-align: left; margin-bottom: 0.6rem; }
+.fallliste th, .fallliste td {
+  text-align: left; padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--linie); vertical-align: top;
+}
+.fallliste th { font-size: 0.85rem; color: var(--leise); font-weight: 600; }
+.fallliste tbody tr:hover { background: var(--hintergrund); }
+
+.fall-kopf {
+  display: flex; flex-wrap: wrap; gap: 1rem;
+  align-items: flex-start; justify-content: space-between;
+}
+.fall-stand { margin: 0; text-align: right; }
+.fall-stand strong { font-size: 1.5rem; }
+
+.fall-spalten {
+  display: grid; gap: 1.5rem; margin-top: 1.5rem;
+  grid-template-columns: minmax(14rem, 1fr) minmax(20rem, 1.6fr);
+}
+@media (max-width: 46rem) {
+  .fall-spalten { grid-template-columns: 1fr; }
+  .fall-stand { text-align: left; }
+}
+
+.datenliste { margin: 0; }
+.datenliste dt {
+  font-size: 0.85rem; color: var(--leise); margin-top: 0.7rem;
+}
+.datenliste dd { margin: 0.1rem 0 0; overflow-wrap: anywhere; }
+
+.trefferliste { list-style: none; margin: 0 0 1rem; padding: 0; }
+.trefferliste li { margin-bottom: 0.6rem; }
+
+.treffer {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  width: 100%; text-align: left; font: inherit; color: inherit;
+  padding: 0.85rem 1rem; cursor: pointer;
+  background: var(--flaeche);
+  border: 2px solid var(--linie); border-radius: 10px;
+}
+.treffer:hover { border-color: var(--akzent); }
+.treffer-kopf { display: flex; align-items: baseline; gap: 0.6rem; }
+.treffer-titel { font-weight: 700; flex: 1; }
+.treffer-score {
+  font-variant-numeric: tabular-nums; color: var(--leise); font-size: 0.9rem;
+}
+.treffer-adresse { color: var(--text); }
+.treffer-grund { color: var(--leise); font-size: 0.9rem; }
+
+/* Die Ziffer, die denselben Knopf drückt. */
+.taste {
+  flex: none; display: inline-block; min-width: 1.6rem; text-align: center;
+  font-variant-numeric: tabular-nums; font-weight: 700; font-size: 0.85rem;
+  padding: 0.1rem 0.35rem; border-radius: 5px;
+  background: var(--hintergrund); border: 1px solid var(--linie);
+  color: var(--leise);
+}
+.knopf.keiner { display: inline-flex; align-items: center; gap: 0.6rem; }
+
+.tastenhilfe { margin-top: 1.25rem; }
+kbd {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem; padding: 0.05rem 0.4rem;
+  border: 1px solid var(--linie); border-bottom-width: 2px;
+  border-radius: 4px; background: var(--flaeche);
+}

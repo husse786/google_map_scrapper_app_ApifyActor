@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import pruefmaske
 from data_cleaner import OUTPUT_FILES
 from db import Datenbank
 from fake_provider import FakeProvider
@@ -373,6 +374,7 @@ def ergebnis_zeigen(request: Request, job_id: int):
     with Datenbank(DATENBANK) as datenbank:
         job = datenbank.job_lesen(job_id)
         gezaehlt = datenbank.ergebnis_zaehlen(job_id) if job else {}
+        pruefstand = pruefmaske.fortschritt(datenbank, job_id) if job else {}
     if not job:
         return fehlerseite(request, 'Diesen Auftrag gibt es nicht',
                            f'Ein Auftrag mit der Nummer {job_id} ist nicht '
@@ -413,7 +415,8 @@ def ergebnis_zeigen(request: Request, job_id: int):
 
     return seite(request, 'ergebnis.html', 'ergebnis', job_id=job_id,
                  ueberschrift=ueberschrift, zusammenfassung=zusammenfassung,
-                 dateien=dateien)
+                 dateien=dateien,
+                 pruefstand=pruefstand if vollstaendig else {})
 
 
 @app.get('/ergebnis/{job_id}/datei/{schluessel}')
@@ -444,6 +447,119 @@ def datei_herunterladen(request: Request, job_id: int, schluessel: str):
 def ergebnisordner(dateiname: str) -> Path:
     """<eingabedateiname>_ergebnis neben der hochgeladenen Datei (§2)."""
     return UPLOADS / f'{Path(dateiname).stem}_ergebnis'
+
+
+# ==========================================================================
+# Seite 5 — Prüfmaske (Phase 8)
+#
+# Datei ② hatte bis hierher keinen Rückweg: Der Sachbearbeiter entschied in
+# Excel und hatte zwei Dateien fürs ERP statt einer. Hier entscheidet er im
+# Browser, und der Kunde landet in `fertig_fuer_erp.csv`.
+# ==========================================================================
+
+def _pruefjob(request: Request, job_id: int):
+    """Der Job, wenn er da ist und Prüffälle haben kann. Sonst eine Fehlerseite."""
+    with Datenbank(DATENBANK) as datenbank:
+        job = datenbank.job_lesen(job_id)
+    if not job:
+        return None, fehlerseite(request, 'Diesen Auftrag gibt es nicht',
+                                 f'Ein Auftrag mit der Nummer {job_id} ist '
+                                 f'nicht gespeichert.', code=404)
+    if job['status'] != 'FERTIG':
+        return None, fehlerseite(
+            request, 'Dieser Auftrag ist noch nicht durch',
+            'Prüfen lässt sich erst, wenn der Lauf fertig ist — vorher steht '
+            'noch nicht fest, welche Kunden zur Prüfung gehen.',
+            'Der Stand des Auftrags steht auf der Ergebnisseite.')
+    return job, None
+
+
+@app.get('/pruefung/{job_id}', response_class=HTMLResponse)
+def pruefung_liste(request: Request, job_id: int):
+    """Alle offenen Prüffälle eines Auftrags, einer je Zeile."""
+    job, fehler = _pruefjob(request, job_id)
+    if fehler:
+        return fehler
+
+    with Datenbank(DATENBANK) as datenbank:
+        offen = datenbank.pruefaelle_lesen(job_id)
+        stand = pruefmaske.fortschritt(datenbank, job_id)
+        faelle = [{
+            'kunde_id': kunde['id'],
+            'kunden_nr': kunde['kunden_nr'],
+            'bezeichnung': kunde['search_string'] or kunde['place_id'] or '',
+            'grund': kunde['grund'] or '',
+            'treffer': len(datenbank.kandidaten_lesen(kunde['id'])),
+        } for kunde in offen]
+
+    return seite(request, 'pruefung_liste.html', 'pruefung', job_id=job_id,
+                 faelle=faelle, stand=stand)
+
+
+@app.get('/pruefung/{job_id}/fall/{kunde_id}', response_class=HTMLResponse)
+def pruefung_fall(request: Request, job_id: int, kunde_id: int):
+    """Ein Fall: Kundendaten links, gefundene Treffer rechts."""
+    job, fehler = _pruefjob(request, job_id)
+    if fehler:
+        return fehler
+
+    with Datenbank(DATENBANK) as datenbank:
+        kunde = datenbank.kunde_lesen(kunde_id)
+        if not kunde or kunde['job_id'] != job_id:
+            return fehlerseite(request, 'Diesen Fall gibt es nicht',
+                               'Der Verweis führt zu einem Kunden, der nicht '
+                               'zu diesem Auftrag gehört.', code=404)
+        kandidaten = datenbank.kandidaten_lesen(kunde_id)
+        stand = pruefmaske.fortschritt(datenbank, job_id)
+
+    return seite(request, 'pruefung_fall.html', 'pruefung', job_id=job_id,
+                 kunde=kunde, kandidaten=kandidaten, stand=stand,
+                 entschieden=kunde['ergebnis'] != 'pruefung')
+
+
+@app.post('/pruefung/{job_id}/fall/{kunde_id}')
+def pruefung_entscheiden(request: Request, job_id: int, kunde_id: int,
+                         kandidat_id: str = Form('')):
+    """
+    Eine Entscheidung, ein Schreibvorgang.
+
+    Danach stimmen die drei Dateien wieder — nicht erst, wenn jemand am Ende
+    einen Knopf drückt. Wer die Arbeit unterbricht, hat den Stand trotzdem in
+    der Datei und in der Datenbank.
+    """
+    job, fehler = _pruefjob(request, job_id)
+    if fehler:
+        return fehler
+
+    gewaehlt = None if kandidat_id in ('', 'keiner') else kandidat_id
+    try:
+        gewaehlt = int(gewaehlt) if gewaehlt is not None else None
+    except ValueError:
+        return fehlerseite(request, 'Diese Auswahl gibt es nicht',
+                           'Bitte einen der angezeigten Treffer wählen oder '
+                           '«Keiner passt».')
+
+    with Datenbank(DATENBANK) as datenbank:
+        kunde = datenbank.kunde_lesen(kunde_id)
+        if not kunde or kunde['job_id'] != job_id:
+            return fehlerseite(request, 'Diesen Fall gibt es nicht',
+                               'Der Verweis führt zu einem Kunden, der nicht '
+                               'zu diesem Auftrag gehört.', code=404)
+        try:
+            pruefmaske.entscheiden(datenbank, kunde_id, gewaehlt)
+        except ValueError as hinweis:
+            return fehlerseite(request, 'Diese Auswahl gibt es nicht',
+                               str(hinweis))
+
+        pruefmaske.dateien_neu_schreiben(
+            datenbank, job_id, str(ergebnisordner(job['dateiname'])))
+        weiter = pruefmaske.naechster_offener(datenbank, job_id,
+                                              nach_kunde_id=kunde_id)
+
+    if weiter:
+        return RedirectResponse(f'/pruefung/{job_id}/fall/{weiter}',
+                                status_code=303)
+    return RedirectResponse(f'/pruefung/{job_id}', status_code=303)
 
 
 def gelaufene_zeit(job: dict) -> str:

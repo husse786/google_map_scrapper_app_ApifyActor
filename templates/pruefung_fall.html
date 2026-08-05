@@ -1,0 +1,117 @@
+{# Phase 8: ein Prüffall. Kundendaten links, gefundene Treffer rechts.
+
+   Jeder Treffer ist ein echter Absendeknopf in einem gewöhnlichen Formular.
+   Damit geht die Maske mit der Tastatur allein: Tab und Enter reichen, und
+   die Zifferntasten sind nur eine Abkürzung obendrauf. Ohne JavaScript
+   bleibt alles bedienbar. #}
+{% extends "grundgeruest.html" %}
+{% block titel %}Fall {{ kunde.kunden_nr }} prüfen — Kundendaten anreichern{% endblock %}
+{% block inhalt %}
+
+<section class="karte">
+  <div class="fall-kopf">
+    <div>
+      <h1>Kunde {{ kunde.kunden_nr }}</h1>
+      <p class="fuehrung">{{ kunde.grund }}</p>
+    </div>
+    <p class="fall-stand">
+      <strong>{{ zahl(stand.entschieden) }}</strong> von {{ zahl(stand.gesamt) }}
+      entschieden
+      <span class="bez">{{ zahl(stand.offen) }} noch offen</span>
+    </p>
+  </div>
+
+  {% if entschieden %}
+  <p class="warnbox">
+    Dieser Fall ist bereits entschieden: {{ kunde.qualitaet }}.
+    Eine neue Auswahl ersetzt die alte.
+  </p>
+  {% endif %}
+
+  <div class="fall-spalten">
+    <div class="fall-kunde">
+      <h2>Das steht im ERP</h2>
+      <dl class="datenliste">
+        <dt>KundenNr</dt><dd>{{ kunde.kunden_nr }}</dd>
+        {% if kunde.search_string %}
+        <dt>Gesucht</dt><dd>{{ kunde.search_string }}</dd>
+        {% endif %}
+        {% if kunde.plz %}<dt>PLZ</dt><dd>{{ kunde.plz }}</dd>{% endif %}
+        {% if kunde.stadt %}<dt>Stadt</dt><dd>{{ kunde.stadt }}</dd>{% endif %}
+        {% if kunde.place_id %}
+        <dt>Google-ID</dt><dd class="kachel-spalten">{{ kunde.place_id }}</dd>
+        {% endif %}
+      </dl>
+    </div>
+
+    <div class="fall-treffer">
+      <h2>Das hat Google gefunden</h2>
+
+      <form method="post" action="/pruefung/{{ job_id }}/fall/{{ kunde.id }}"
+            id="entscheidung">
+        {% if kandidaten %}
+        <ol class="trefferliste">
+          {% for kandidat in kandidaten %}
+          <li>
+            <button class="treffer" type="submit" name="kandidat_id"
+                    value="{{ kandidat.id }}"
+                    {% if loop.index < 10 %}data-taste="{{ loop.index }}"{% endif %}>
+              <span class="treffer-kopf">
+                {% if loop.index < 10 %}
+                <span class="taste" aria-hidden="true">{{ loop.index }}</span>
+                {% endif %}
+                <span class="treffer-titel">{{ kandidat.title or 'ohne Namen' }}</span>
+                <span class="treffer-score">{{ kandidat.score }}</span>
+              </span>
+              <span class="treffer-adresse">
+                {{ kandidat.street }}{% if kandidat.postal_code %},
+                {{ kandidat.postal_code }}{% endif %} {{ kandidat.city }}
+              </span>
+              {% if kandidat.grund %}
+              <span class="treffer-grund">{{ kandidat.grund }}</span>
+              {% endif %}
+            </button>
+          </li>
+          {% endfor %}
+        </ol>
+        {% else %}
+        <p class="fuehrung">
+          Zu diesem Kunden hat Google keinen Treffer geliefert.
+        </p>
+        {% endif %}
+
+        <button class="knopf leise keiner" type="submit" name="kandidat_id"
+                value="keiner" data-taste="0">
+          <span class="taste" aria-hidden="true">0</span>
+          Keiner passt — Kunde nach «Nicht möglich»
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <p class="klein tastenhilfe">
+    Mit der Tastatur: <kbd>1</kbd> bis <kbd>9</kbd> wählt einen Treffer,
+    <kbd>0</kbd> steht für «Keiner passt». Danach steht der nächste Fall
+    sofort da. Ohne Zifferntasten geht es mit <kbd>Tab</kbd> und
+    <kbd>Enter</kbd> genauso.
+  </p>
+
+  <div class="knopfreihe">
+    <a class="knopf leise" href="/pruefung/{{ job_id }}">Zurück zur Liste</a>
+  </div>
+</section>
+
+<script>
+  // Nur eine Abkürzung: die Zifferntaste drückt den Knopf, den es ohnehin
+  // gibt. Fällt das Skript aus, bleibt das Formular vollständig bedienbar.
+  document.addEventListener('keydown', function (ereignis) {
+    if (ereignis.ctrlKey || ereignis.metaKey || ereignis.altKey) return;
+    var knopf = document.querySelector(
+      '#entscheidung [data-taste="' + ereignis.key + '"]');
+    if (!knopf) return;
+    ereignis.preventDefault();
+    knopf.click();
+  });
+</script>
+
+{% endblock %}

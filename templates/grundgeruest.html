@@ -17,7 +17,8 @@
       </div>
       <ol class="schritte" aria-label="Ablauf">
         {% set schritte = [('art', 'Art wählen'), ('datei', 'Datei'),
-                           ('lauf', 'Lauf'), ('ergebnis', 'Ergebnis')] %}
+                           ('lauf', 'Lauf'), ('ergebnis', 'Ergebnis'),
+                           ('pruefung', 'Prüfung')] %}
         {% for schluessel, beschriftung in schritte %}
           <li class="schritt {% if schritt == schluessel %}jetzt{% endif %}"
               {% if schritt == schluessel %}aria-current="step"{% endif %}>

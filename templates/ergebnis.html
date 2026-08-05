@@ -19,14 +19,33 @@
     {% endfor %}
   </div>
 
-  <p class="klein">
-    Geprüfte Zeilen aus <em>Zur Prüfung</em> können Sie später wieder
-    hochladen — sie werden dann in die ERP-Datei übernommen.
-  </p>
+  {% if pruefstand and pruefstand.gesamt %}
+    {% if pruefstand.alle_entschieden %}
+    <p class="klein">
+      Alle {{ zahl(pruefstand.gesamt) }} Fälle aus <em>Zur Prüfung</em> sind
+      entschieden und stehen in <em>Fertig fürs ERP</em>. Ein Import genügt.
+    </p>
+    {% else %}
+    <p class="klein">
+      Die {{ zahl(pruefstand.offen) }} Fälle aus <em>Zur Prüfung</em>
+      entscheiden Sie hier im Browser, nicht in Excel. Jeder entschiedene Fall
+      wandert sofort in <em>Fertig fürs ERP</em> — am Ende importieren Sie
+      eine Datei statt zwei.
+    </p>
+    {% endif %}
+  {% endif %}
   {% endif %}
 
   <div class="knopfreihe">
+    {% if pruefstand and pruefstand.offen %}
+    <a class="knopf gross" href="/pruefung/{{ job_id }}">
+      {% if pruefstand.entschieden %}Prüfung fortsetzen{% else %}Fälle prüfen{% endif %}
+      ({{ zahl(pruefstand.offen) }})
+    </a>
+    <a class="knopf leise" href="/">Neuen Lauf starten</a>
+    {% else %}
     <a class="knopf gross" href="/">Neuen Lauf starten</a>
+    {% endif %}
   </div>
 </section>
 
