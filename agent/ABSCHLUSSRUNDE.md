@@ -77,37 +77,87 @@ Auftraggebers, nicht des Entwicklers.
 | `csv_postprocessor.py` | niemand | **löschen** — Spaltenauswahl liegt jetzt im Datenvertrag |
 | `logger_config.py` | nur die beiden darüber | **löschen** — fällt mit ihnen |
 | `data_preprocessor.py` | niemand | **erst nach Teil 1 löschen.** Seine Prüfung wird dort nachgebaut. Vorher bleibt es als Referenz stehen |
-| `data_consolidator.py` | niemand | **nicht löschen, siehe unten** |
+| `data_consolidator.py` | niemand | **löschen** — Entscheidung des Auftraggebers, s. unten |
 
-### `data_consolidator.py` — Frage an den Auftraggeber
+### `data_consolidator.py` — beantwortet, wird gelöscht
 
-Das Modul führte die Ergebnisse mehrerer Batches zusammen. Die Webapp kennt nur
-einzelne Aufträge; ein Zusammenführen gibt es nicht.
+Das Modul führte die Ergebnisse mehrerer Batches zusammen. Der Auftraggeber hat
+die Herkunft geklärt: Er teilte eine Liste von rund 7'000 Kunden **von Hand in
+Excel** in fünf bis sechs Dateien auf, liess sie einzeln laufen und stand danach
+vor fünf mal drei Ausgabedateien, die so niemandem zu geben waren. Das Modul
+führte sie wieder zusammen.
 
-Ob das fehlt, hängt an einer Frage, die der Entwickler nicht beantworten kann:
-**Wird weiterhin in Batches zu 2'513 gearbeitet, oder geht künftig die ganze
-Datei in einem Auftrag durch?**
+Das Aufteilen war eine Notlösung für die alte Anwendung: kein sichtbarer
+Fortschritt, kein Fortsetzen nach einem Abbruch, also kleinere Häppchen. Beides
+gibt es jetzt — die Zeilengrenze liegt bei 10'000 (`03 C`), der Gesamtbestand
+bei rund 7'539, und ein unterbrochener Lauf setzt fort (Phase 3).
 
-Die Zeilengrenze liegt bei 10'000 (`03 C`), der Gesamtbestand bei rund 7'539
-Kunden. Ein Auftrag würde also reichen — dann ist das Modul überflüssig. Wird
-weiter in Batches gearbeitet, fehlt die Funktion in der Webapp.
+Damit entfällt der Anlass. **Löschen.** Sollte das Zusammenführen je wieder
+gebraucht werden, liegt es in der Git-Historie. Etwas stehen zu lassen „für den
+Fall" schliesst `03 E` aus.
 
-**Bis zur Antwort bleibt die Datei stehen.** Nicht löschen, nicht einbauen.
+---
+
+## Teil 2a — drei Punkte aus der Abnahme von Teil 1
+
+Vor den Löschungen. Alle drei betreffen, was der Nutzer liest.
+
+### A — Doppelmeldung auflösen
+
+Drei der vier Arten unvollständiger Zeilen werden zusätzlich als „Kostenstelle
+im Strassenfeld" gemeldet. Bei `Denner Bremgarten` **gibt es kein Strassenfeld**
+— die Aussage ist nicht ungenau, sie ist falsch.
+
+Die Kostenstellenprüfung prüft künftig nur Zeilen, deren Suchbegriff vollständig
+ist. Die Vollständigkeitsprüfung kommt zuerst; wer dort gemeldet wurde,
+erscheint nicht ein zweites Mal unter einem falschen Etikett.
+
+Die Zeilenzahlen in den Phase-4-Tests ändern sich dadurch. Das ist richtig so —
+sie hielten ein Verhalten fest, das eine falsche Aussage enthielt. Die Anpassung
+gehört in die Findings, mit den Zahlen vorher und nachher.
+
+### B — «1 Zeilen haben»
+
+Die beiden Meldungen aus Phase 4 bilden den Singular nicht. Die neue Prüfung tut
+es bereits (`upload_pruefung.py:360`). Dieselbe Form für die beiden alten.
+
+### C — README kennt die Prüfmaske nicht
+
+Schritt 4 endet beim Herunterladen. Dass Prüffälle im Browser entschieden
+werden, steht nirgends — Phase 8 wurde mit dieser Lücke abgenommen, das ist ein
+Versäumnis des Prüfers.
+
+Ein eigener Schritt zwischen „Lauf" und „Ergebnis": was die Prüfmaske ist, wie
+man sie erreicht, dass mit den Tasten `1`–`9` und `0` entschieden wird, und dass
+entschiedene Fälle in die ERP-Datei wandern. In der Sprache der übrigen
+Schritte — für jemanden ohne Vorkenntnisse.
+
+### Abnahmekriterien Teil 2a
+
+- [ ] `Denner Bremgarten` erscheint nur noch unter „unvollständiger Suchbegriff"
+- [ ] `Emil Frey AG, KST 715611 0, 5745 Safenwil` erscheint weiterhin unter
+      „Kostenstelle" — die Zeile ist vollständig, nur der Inhalt taugt nicht
+- [ ] Keine Meldung sagt mehr «1 Zeilen»
+- [ ] Das README beschreibt die Prüfmaske als eigenen Schritt
+- [ ] Angepasste Phase-4-Zahlen in den Findings, vorher und nachher
+
+---
 
 ### Abnahmekriterien Teil 2
 
-- [ ] Die fünf zum Löschen freigegebenen Dateien sind entfernt
+- [ ] Die sechs zum Löschen freigegebenen Dateien sind entfernt
 - [ ] Fünf vollständige Läufe, unveränderte Testzahl aus Teil 1
 - [ ] Kein Import zeigt mehr auf eine entfernte Datei
 - [ ] `README.md` erwähnt keine entfernte Datei
-- [ ] `data_preprocessor.py` und `data_consolidator.py` stehen noch da, mit je
-      einem Kommentar am Kopf, warum
+- [ ] `data_preprocessor.py` steht noch da, mit einem Kommentar am Kopf, warum
 
 ---
 
 ## Reihenfolge
 
-Teil 1 zuerst, vollständig und abgenommen. Erst danach Teil 2 — sonst wird die
-Referenz für die nachzubauende Prüfung gelöscht, bevor sie nachgebaut ist.
+Teil 1 ist abgenommen. Jetzt **Teil 2a**, dann **Teil 2**. In dieser Reihenfolge:
+Teil 2 löscht `data_preprocessor.py`, und bis Teil 2a durch ist, bleibt die
+Referenz nützlich.
 
-Findings in `agent/findings/FINDINGS_ABSCHLUSSRUNDE.md`, beide Teile getrennt.
+Findings in `agent/findings/FINDINGS_ABSCHLUSSRUNDE_TEIL2.md`, beide Teile
+getrennt.
