@@ -41,7 +41,7 @@ python webapp.py --offen
 Die Adresse lautet dann `http://<name-dieses-rechners>:8000`. Dieser Rechner
 muss laufen, solange jemand die Anwendung benutzt.
 
-### Der Ablauf, vier Seiten
+### Der Ablauf, fünf Seiten
 
 1. **Art wählen** — zwei Möglichkeiten:
    * **Erstanreicherung**: Nur Name und Adresse sind bekannt. Jeder Kunde wird
@@ -58,7 +58,17 @@ muss laufen, solange jemand die Anwendung benutzt.
    auch eine Mailadresse hinterlegen.
 3. **Lauf** — Fortschritt, geschätzte Restzeit, Abbruch-Knopf. Das Fenster darf
    geschlossen werden, der Lauf geht weiter.
-4. **Ergebnis** — die drei Dateien zum Herunterladen.
+4. **Ergebnis** — die drei Dateien zum Herunterladen. Gibt es Fälle zur Prüfung,
+   steht hier der Knopf *Fälle prüfen*.
+5. **Prüfung** — die Fälle, bei denen der Abgleich nicht entscheiden konnte,
+   entscheiden Sie hier im Browser statt in Excel. Links steht, was im ERP
+   steht; rechts, was Google gefunden hat — jeder Treffer mit seinem Wert und
+   dem Grund. Ein Klick wählt einen Treffer, oder Sie wählen *Keiner passt*.
+   Mit der Tastatur geht es schneller: `1` bis `9` wählt einen Treffer, `0`
+   steht für *Keiner passt*, und der nächste Fall steht sofort da. Jeder
+   entschiedene Fall wandert augenblicklich in *Fertig fürs ERP* — Sie
+   importieren am Ende eine Datei statt zwei. Aufhören und später weitermachen
+   ist jederzeit möglich; der Stand bleibt.
 
 ### Wenn etwas dazwischenkommt
 

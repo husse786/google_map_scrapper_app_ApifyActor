@@ -1,11 +1,14 @@
 # test_abschlussrunde_abnahme.py
 # One test per acceptance criterion of the closing round (agent/ABSCHLUSSRUNDE.md).
 #
-# Part 1: the completeness check on SearchString that data_preprocessor.py used
-# to perform and that silently disappeared during the rebuild. The four example
-# strings come from the plan itself; everything else is made up on the spot.
-# No real customer data, no network.
+# Part 1: the completeness check on SearchString that the old
+# data_preprocessor.py used to perform and that silently disappeared during the
+# rebuild. Part 2a: three points from the review of part 1. Part 2: the dead
+# modules are gone, including that reference file — it lives in git history now.
+# The four example strings come from the plan itself; everything else is made up
+# on the spot. No real customer data, no network.
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -97,7 +100,7 @@ def test_vollstaendigkeit_im_einzelnen(search_string, erwartet):
 
 
 def test_die_drei_teile_werden_richtig_zerlegt():
-    """Gegenprobe: die Zerlegung ist dieselbe wie in data_preprocessor.py."""
+    """Gegenprobe: die Zerlegung ist dieselbe wie im alten data_preprocessor."""
     assert titelteil(VOLLSTAENDIG) == 'Denner'
     assert strassenteil(VOLLSTAENDIG) == 'Hauptstrasse 5'
     assert plz_ort_teil(VOLLSTAENDIG) == '5620 Bremgarten'
@@ -316,6 +319,187 @@ def test_die_warnung_steht_auf_der_seite_datei(browser):
     assert 'Diese Kunden landen voraussichtlich in' in antwort.text
     # Warnung, keine Abweisung: der Start bleibt möglich.
     assert 'action="/starten"' in antwort.text
+
+
+# ============================================================================
+# Teil 2a — A: keine Doppelmeldung mehr
+# ============================================================================
+
+def test_unvollstaendige_zeile_erscheint_nur_einmal(tmp_path):
+    """
+    «Denner Bremgarten» hat kein Strassenfeld, in dem eine Kostenstelle
+    stehen könnte. Die Meldung war nicht ungenau, sie war falsch.
+    """
+    quelle = datei_schreiben(tmp_path, [zeile(OHNE_KOMMA)])
+
+    bericht = pruefe_datei(quelle)
+
+    assert bericht.befund('unvollstaendig').anzahl == 1
+    assert bericht.befund('kostenstelle') is None
+
+
+@pytest.mark.parametrize('search_string', [
+    OHNE_KOMMA, LEER, 'Denner, , 5620 Bremgarten', 'Denner, Hauptstrasse 5, ',
+])
+def test_keine_unvollstaendige_art_wird_als_kostenstelle_gemeldet(
+        tmp_path, search_string):
+    quelle = datei_schreiben(tmp_path, [zeile(search_string)])
+
+    bericht = pruefe_datei(quelle)
+
+    assert bericht.befund('unvollstaendig') is not None
+    assert bericht.befund('kostenstelle') is None
+
+
+def test_eine_echte_kostenstelle_wird_weiterhin_gemeldet(tmp_path):
+    """
+    Die Gegenprobe: vollständiger Suchbegriff, untauglicher Inhalt.
+
+    Ginge das mit verloren, hätte Teil 2a eine Prüfung abgeschafft statt eine
+    falsche Aussage.
+    """
+    kostenstelle = 'Emil Frey AG, KST 715611 0, 5745 Safenwil'
+    quelle = datei_schreiben(tmp_path, [zeile(kostenstelle)])
+
+    bericht = pruefe_datei(quelle)
+
+    assert bericht.befund('unvollstaendig') is None
+    assert bericht.befund('kostenstelle').anzahl == 1
+    assert 'KST 715611 0' in bericht.befund('kostenstelle').beispiel_zeile
+
+
+def test_jede_zeile_erscheint_unter_genau_einem_befund(tmp_path):
+    """Sieben Zeilen, drei Befunde, keine Zeile doppelt gezählt."""
+    quelle = datei_schreiben(tmp_path, [
+        zeile(OHNE_KOMMA, '900001'),
+        zeile(OHNE_STRASSE, '900002'),
+        zeile('Denner, , 5620 Bremgarten', '900003'),
+        zeile(LEER, '900004'),
+        zeile('Emil Frey AG, KST 715611 0, 5745 Safenwil', '900005'),
+        zeile('Boucherie, Rue des Tilleuls 5, 1800 Vevey', '900006'),
+        zeile(VOLLSTAENDIG, '900007'),
+    ])
+
+    bericht = pruefe_datei(quelle)
+
+    assert bericht.befund('unvollstaendig').anzahl == 4
+    assert bericht.befund('kostenstelle').anzahl == 1
+    assert bericht.befund('kategorietitel').anzahl == 1
+    # Sechs von sieben Zeilen sind gemeldet, jede genau einmal.
+    assert sum(b.anzahl for b in bericht.befunde) == 6
+
+
+# ============================================================================
+# Teil 2a — B: «1 Zeilen haben» ist weg
+# ============================================================================
+
+@pytest.mark.parametrize('search_string, art', [
+    (OHNE_KOMMA, 'unvollstaendig'),
+    ('Emil Frey AG, KST 715611 0, 5745 Safenwil', 'kostenstelle'),
+    ('Boucherie, Rue des Tilleuls 5, 1800 Vevey', 'kategorietitel'),
+])
+def test_keine_meldung_sagt_eine_zeilen(tmp_path, search_string, art):
+    """Bei genau einer betroffenen Zeile steht der Singular da."""
+    quelle = datei_schreiben(tmp_path, [zeile(search_string)])
+
+    befund = pruefe_datei(quelle).befund(art)
+
+    assert befund.anzahl == 1
+    assert '1 Zeilen' not in befund.meldung
+    assert befund.meldung.startswith('1 Zeile ')
+
+
+def test_der_plural_bleibt_wo_er_hingehoert(tmp_path):
+    quelle = datei_schreiben(tmp_path, [
+        zeile('Emil Frey AG, KST 715611 0, 5745 Safenwil', '900001'),
+        zeile('Muster AG, KOST 4711, 5745 Safenwil', '900002'),
+    ])
+
+    befund = pruefe_datei(quelle).befund('kostenstelle')
+
+    assert befund.anzahl == 2
+    assert befund.meldung.startswith('2 Zeilen haben')
+
+
+# ============================================================================
+# Teil 2a — C: das README kennt die Prüfmaske
+# ============================================================================
+
+def liesmich() -> str:
+    return (Path(__file__).parent / 'README.md').read_text(encoding='utf-8')
+
+
+def test_das_readme_beschreibt_die_pruefmaske_als_eigenen_schritt():
+    text = liesmich()
+
+    assert '5. **Prüfung**' in text
+    assert 'fünf Seiten' in text
+
+
+def test_das_readme_sagt_was_die_pruefmaske_tut():
+    """Was sie ist, wie man sie erreicht, die Tasten, und wohin die Fälle gehen."""
+    text = liesmich()
+
+    assert 'Fälle prüfen' in text, 'wie man sie erreicht'
+    assert '`1` bis `9`' in text, 'die Tasten'
+    assert '`0`' in text
+    assert 'Keiner passt' in text
+    assert 'Fertig fürs ERP' in text, 'wohin die entschiedenen Fälle gehen'
+    assert 'eine Datei statt zwei' in text
+    assert 'später weitermachen' in text, 'die Arbeit ist unterbrechbar'
+
+
+# ============================================================================
+# Teil 2 — die toten Module sind weg
+# ============================================================================
+
+REPO = Path(__file__).parent
+
+GELOESCHT = (
+    'data_cleaner.py.bak',
+    'clean_input_data.py',
+    'csv_processor.py',
+    'csv_postprocessor.py',
+    'logger_config.py',
+    'data_preprocessor.py',
+    'data_consolidator.py',
+)
+
+
+@pytest.mark.parametrize('dateiname', GELOESCHT)
+def test_die_tote_datei_ist_weg(dateiname):
+    assert not (REPO / dateiname).exists(), \
+        f'{dateiname} ist wieder da — die Historie liegt in Git, die Datei nicht hierher'
+
+
+# `data_cleaner.py.bak` war nie importierbar — die Endung ist `.bak`, und
+# `data_cleaner` selbst lebt weiter. Für die Sicherungskopie genügt der
+# Existenztest darüber.
+GELOESCHTE_MODULE = tuple(name.removesuffix('.py') for name in GELOESCHT
+                          if name.endswith('.py'))
+
+
+@pytest.mark.parametrize('modul', GELOESCHTE_MODULE)
+def test_kein_modul_importiert_die_geloeschte_datei(modul):
+    """
+    Ein Import auf eine entfernte Datei fällt sonst erst zur Laufzeit auf.
+
+    Geprüft wird der Modulname, nicht der Dateiname: `import logger_config`
+    und `from logger_config import logger` sollen beide auffallen.
+    """
+    muster = re.compile(rf'^\s*(?:from\s+{modul}\s+import|import\s+{modul})\b',
+                        re.MULTILINE)
+
+    for pfad in sorted(REPO.glob('*.py')):
+        text = pfad.read_text(encoding='utf-8')
+        assert not muster.search(text), f'{pfad.name} importiert {modul}'
+
+
+def test_das_readme_nennt_keine_entfernte_datei():
+    text = liesmich()
+
+    for dateiname in GELOESCHT:
+        assert dateiname not in text, f'README nennt {dateiname}'
 
 
 def test_der_datenvertrag_beschreibt_diese_regel():

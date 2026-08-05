@@ -13,7 +13,8 @@
 # Abschlussrunde der unvollständige Suchbegriff. Der stammt nicht aus `03 D`,
 # sondern aus 02_DATENVERTRAG.md §1 — die Regel stand dort von Anfang an, nur
 # setzte sie niemand um: Im alten Ablauf tat das `data_preprocessor.py`, und
-# beim Umbau fiel die Prüfung mit der Datei weg.
+# beim Umbau fiel die Prüfung mit der Datei weg. Die Datei ist seit der
+# Abschlussrunde gelöscht — sie liegt in der Git-Historie, ihre Regel hier.
 #
 # Drei der vier **warnen**: der Nutzer entscheidet, ob er trotzdem läuft.
 #
@@ -341,10 +342,12 @@ def _pruefe_unvollstaendige_suchbegriffe(df: pd.DataFrame, rohzeilen: list,
     """
     Zeilen, deren Suchbegriff nicht aus drei Teilen besteht.
 
-    Diese Prüfung stand im alten Ablauf in `data_preprocessor.py`: Es teilte
-    die Eingabe in `_vollstaendig.csv` und `_unvollstaendig.csv` und liess nur
-    die vollständigen Zeilen zur Suche. Beim Umbau fiel sie still weg, weil sie
-    in einer Datei steckte, die ersetzt wurde. Nachgebaut in der Abschlussrunde.
+    Diese Prüfung stand im alten Ablauf im damaligen `data_preprocessor.py`:
+    Es teilte die Eingabe in `_vollstaendig.csv` und `_unvollstaendig.csv` und
+    liess nur die vollständigen Zeilen zur Suche. Beim Umbau fiel sie still weg,
+    weil sie in einer Datei steckte, die ersetzt wurde. Nachgebaut in der
+    Abschlussrunde, Teil 1; die alte Datei ist in Teil 2 gelöscht worden und
+    liegt in der Git-Historie.
 
     Sie warnt und blockiert nicht — wie die beiden anderen inhaltlichen
     Prüfungen und aus demselben Grund: Der Nutzer entscheidet, ob er die Zeilen
@@ -369,17 +372,30 @@ def _pruefe_unvollstaendige_suchbegriffe(df: pd.DataFrame, rohzeilen: list,
 
 def _pruefe_kostenstellen(df: pd.DataFrame, rohzeilen: list,
                           bericht: Pruefbericht) -> None:
+    """
+    Zeilen, in deren Strassenfeld keine Strasse steht.
+
+    Geprüft werden nur **vollständige** Suchbegriffe (Teil 2a der
+    Abschlussrunde). Bei `Denner Bremgarten` gibt es kein Strassenfeld, in dem
+    eine Kostenstelle stehen könnte — die Meldung wäre nicht ungenau, sondern
+    falsch. Solche Zeilen meldet die Vollständigkeitsprüfung, und zwar nur sie.
+
+    `Emil Frey AG, KST 715611 0, 5745 Safenwil` bleibt hier: Der Suchbegriff
+    ist vollständig, nur sein Inhalt taugt nicht.
+    """
     treffer = [i for i, wert in enumerate(df['SearchString'])
-               if ist_kostenstelle(strassenteil(wert))]
+               if not ist_unvollstaendig(wert) and ist_kostenstelle(strassenteil(wert))]
     if not treffer:
         return
 
     beispiel, nummer = _beispiel(df, rohzeilen, treffer[0])
+    betroffene = ('1 Zeile hat' if len(treffer) == 1
+                  else f'{zahl(len(treffer))} Zeilen haben')
     bericht.befunde.append(Befund(
         art='kostenstelle', schwere=HINWEIS, anzahl=len(treffer),
-        meldung=(f'{zahl(len(treffer))} Zeilen haben im Strassenfeld keinen '
-                 f'Strassennamen, sondern zum Beispiel eine Kostenstelle. '
-                 f'Ohne Strasse findet die Suche die Adresse nicht.'),
+        meldung=(f'{betroffene} im Strassenfeld keinen Strassennamen, sondern '
+                 f'zum Beispiel eine Kostenstelle. Ohne Strasse findet die '
+                 f'Suche die Adresse nicht.'),
         beispiel_zeile=beispiel, zeilennummer=nummer))
 
 
@@ -391,9 +407,11 @@ def _pruefe_kategorietitel(df: pd.DataFrame, rohzeilen: list,
         return
 
     beispiel, nummer = _beispiel(df, rohzeilen, treffer[0])
+    betroffene = ('1 Zeile trägt' if len(treffer) == 1
+                  else f'{zahl(len(treffer))} Zeilen tragen')
     bericht.befunde.append(Befund(
         art='kategorietitel', schwere=HINWEIS, anzahl=len(treffer),
-        meldung=(f'{zahl(len(treffer))} Zeilen tragen als Namen nur eine '
-                 f'Branche statt eines Firmennamens. Die Suche findet dann '
-                 f'viele gleich gute Treffer und kann nicht entscheiden.'),
+        meldung=(f'{betroffene} als Namen nur eine Branche statt eines '
+                 f'Firmennamens. Die Suche findet dann viele gleich gute '
+                 f'Treffer und kann nicht entscheiden.'),
         beispiel_zeile=beispiel, zeilennummer=nummer))
