@@ -95,9 +95,15 @@ Abschliessende Liste. Keine neuen Werte ohne Korrekturplan.
 | `PRUEFUNG (Einzeltreffer unsicher)` | ② | 1 Überlebender, Zusatzprüfung nicht bestanden |
 | `PRUEFUNG (geschlossen)` | ② | Modus B, `permanentlyClosed` |
 | `PRUEFUNG (Standort abweichend)` | ② | Modus B, Distanz > 200 m |
+| `OK (geprueft)` | ① | von Hand in der Prüfmaske gewählt (Phase 8) |
+| `NICHT_MOEGLICH (geprueft)` | ③ | in der Prüfmaske: keiner der Treffer passt (Phase 8) |
 | `NICHT_MOEGLICH (kein Ergebnis)` | ③ | API lieferte nichts |
 | `NICHT_MOEGLICH (ID ungueltig)` | ③ | Modus B, placeId unbekannt |
 | `NICHT_MOEGLICH (Eingabe unbrauchbar)` | ③ | Pflichtfeld fehlt oder leer |
+
+**Schreibweise.** `qualitaet` ist der Schlüssel, den der ERP-Import liest, und
+bleibt **umlautfrei**: `ue`, `oe`, `ae` statt `ü`, `ö`, `ä`. Alle Werte dieser
+Liste folgen dem. Für `grund` gilt das nicht — dort ist freies Deutsch richtig.
 
 ---
 
