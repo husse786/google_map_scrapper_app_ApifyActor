@@ -55,6 +55,18 @@ ZEITUEBERSCHREITUNG_MELDUNG = (
     'gefunden» gelten. Bitte es später noch einmal versuchen und den Lauf '
     'fortsetzen — die bereits verarbeiteten Kunden bleiben erhalten.')
 
+# Der Grund in der CSV für einen Kunden im Modus A, dessen Abfrage nicht
+# zurückkam. Die Fachlogik sieht an dieser Stelle nur eine Gruppe ohne
+# Kandidaten und schreibt «lieferte keinen einzigen Treffer» — richtig für den
+# Fall, für den der Satz gedacht ist: die Quelle hat geantwortet, und die
+# Antwort war leer. Hier hat sie nicht geantwortet, und der Unterschied
+# entscheidet, was der Sachbearbeiter tut: die Adresse im ERP anfassen oder es
+# noch einmal versuchen.
+AUSGEFALLENE_ABFRAGE_GRUND = (
+    'Die Abfrage bei der Datenquelle kam nicht zurück; dieser Kunde wurde '
+    'nicht geprüft. Ob es einen Treffer gibt, ist damit offen — bitte den '
+    'Kunden später noch einmal auffrischen.')
+
 # Pflichtspalten je Modus (02_DATENVERTRAG.md §1)
 PFLICHTSPALTEN = ('SearchString', 'PLZ', 'KundenNr')
 PFLICHTSPALTEN_JE_MODUS = {
@@ -354,6 +366,12 @@ class Lauf:
         gruppe = self._als_gruppe(kunden_nr, search_string, plz, stadt, kandidaten)
         ablage = self.cleaner.entscheide_kunde(kunden_nr, gruppe)
 
+        # Eine ausgefallene Abfrage ist kein leeres Ergebnis. Die Fachlogik
+        # kann das nicht unterscheiden — sie bekommt beides Mal eine Gruppe
+        # ohne Kandidaten. Der Lauf weiss es und stellt den Grund richtig.
+        if isinstance(kandidaten, Ausgefallen):
+            self._grund_bei_ausfall_richtigstellen(ablage)
+
         datei = self._gewaehlte_datei(ablage)
         kopfzeile = ablage[datei][0]
 
@@ -366,6 +384,25 @@ class Lauf:
             grund=kopfzeile['grund'])
 
         return ablage
+
+    @staticmethod
+    def _grund_bei_ausfall_richtigstellen(ablage: dict) -> None:
+        """
+        Setzt den Grund für einen Kunden, dessen Abfrage nicht zurückkam.
+
+        `data_cleaner.py` bleibt unangetastet (`CLAUDE.md`, Bestandscode). Sein
+        Satz gilt weiterhin für den Fall, für den er geschrieben wurde: die
+        Quelle hat geantwortet, und die Antwort war leer. Hier hat sie nicht
+        geantwortet — dieselbe Unterscheidung, die der Modus B über
+        `erreichbar` trifft.
+
+        `qualitaet`, `score` und die Ausgabedatei bleiben unverändert; damit
+        auch der Datenvertrag (§3, kein neuer Wert). Nur der Satz, den der
+        Sachbearbeiter liest, sagt jetzt, was war.
+        """
+        for zeile in ablage['nicht_moeglich']:
+            if zeile['qualitaet'] == 'NICHT_MOEGLICH (kein Ergebnis)':
+                zeile['grund'] = AUSGEFALLENE_ABFRAGE_GRUND
 
     def _einen_kunden_ueber_id(self, job_id: int, kunden_nr: str, stamm,
                                kandidaten: list) -> dict:
@@ -425,7 +462,16 @@ class Lauf:
 
         gruppe = self._als_gruppe(kunde['kunden_nr'], kunde['search_string'] or '',
                                   kunde['plz'] or '', kunde['stadt'] or '', kandidaten)
-        return self.cleaner.entscheide_kunde(kunde['kunden_nr'], gruppe)
+        ablage = self.cleaner.entscheide_kunde(kunde['kunden_nr'], gruppe)
+
+        # Im Modus A tragen beide Fälle dieselbe `qualitaet` — die damalige
+        # Entscheidung steht deshalb im Grund. Ohne diese Zeile fiele der
+        # Kunde beim Fortsetzen auf «lieferte keinen einzigen Treffer» zurück,
+        # und gerade das Fortsetzen ist der Weg, den ihm die Meldung nach zehn
+        # Fehlschlägen empfiehlt.
+        if (kunde['grund'] or '') == AUSGEFALLENE_ABFRAGE_GRUND:
+            self._grund_bei_ausfall_richtigstellen(ablage)
+        return ablage
 
     def _kandidat_ueber_id(self, place_id: str) -> list:
         """

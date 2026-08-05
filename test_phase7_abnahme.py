@@ -960,6 +960,123 @@ def test_abbruch_bleibt_von_der_aenderung_unberuehrt(tmp_path):
 
 
 # ============================================================================
+# K1 (v1.4): «nichts gefunden» und «nicht gefragt» sind zwei Sätze
+#
+# Die letzte Stelle, an der eine ausgefallene Abfrage noch als Ergebnis auftrat.
+# Im Modus A trug der Kunde den Grund «Die Suche … lieferte keinen einzigen
+# Treffer» — wer das liest, prüft die Adresse im ERP. Wer liest, die Abfrage sei
+# nicht zurückgekommen, versucht es erneut.
+# ============================================================================
+
+ALTER_GRUND = 'lieferte keinen einzigen Treffer'
+
+
+class AntwortetLeer:
+    """Die Quelle antwortet, und sie hat nichts. Das ist ein Ergebnis."""
+
+    def fetch_by_text(self, search_string, plz):
+        return []
+
+    def fetch_by_id(self, place_id):
+        return None
+
+
+class AntwortetSauber:
+    """Spiegelt die Eingabe als Treffer zurück."""
+
+    def fetch_by_text(self, search_string, plz):
+        teile = [t.strip() for t in search_string.split(',')]
+        return [Candidate(title=teile[0], street=teile[1], postal_code=plz,
+                          place_id=f'PLACE_{teile[0]}')]
+
+    def fetch_by_id(self, place_id):
+        raise AssertionError('Im Modus A wird nicht über die Id gefragt.')
+
+
+def test_ausgefallene_abfrage_behauptet_nicht_die_suche_habe_nichts_geliefert(tmp_path):
+    """
+    Der Kern von K1 v1.4.
+
+    Zehn Kunden, nur beim ersten läuft die Abfrage in die Frist. Er landet in ③
+    — das war schon richtig — aber mit einem Grund, der sagt, was war.
+    """
+    eingabe = eingabe_schreiben(tmp_path, 10)
+    ziel = tmp_path / 'aus'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(HaengtEinmal(), datenbank, timeout_sekunden=0.3,
+                        arbeiter=1).ausfuehren(eingabe, str(ziel))
+
+    assert ergebnis['status'] == 'FERTIG'
+    df = lies(ziel / OUTPUT_FILES['nicht_moeglich'])
+    assert list(df['KundenNr']) == ['900001']
+
+    zeile = df.iloc[0]
+    assert zeile['qualitaet'] == 'NICHT_MOEGLICH (kein Ergebnis)', \
+        'kein neuer Wert — 02_DATENVERTRAG.md §3 bleibt, wie es ist'
+    assert 'nicht geprüft' in zeile['grund']
+    assert 'nicht zurück' in zeile['grund']
+    assert ALTER_GRUND not in zeile['grund']
+    assert 'ß' not in zeile['grund']
+    assert zeile['score'] == '0.0'
+
+
+def test_echtes_leeres_ergebnis_behaelt_seinen_grund(tmp_path):
+    """
+    Die Gegenprobe, und der Grund, warum `data_cleaner.py` unangetastet bleibt.
+
+    Die Quelle hat geantwortet und nichts gefunden. Genau dafür ist ihr Satz
+    geschrieben, und genau da steht er weiterhin.
+    """
+    eingabe = eingabe_schreiben(tmp_path, 3)
+    ziel = tmp_path / 'aus'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        ergebnis = Lauf(AntwortetLeer(), datenbank).ausfuehren(eingabe, str(ziel))
+
+    assert ergebnis['status'] == 'FERTIG'
+    df = lies(ziel / OUTPUT_FILES['nicht_moeglich'])
+    assert len(df) == 3
+    for _, zeile in df.iterrows():
+        assert zeile['qualitaet'] == 'NICHT_MOEGLICH (kein Ergebnis)'
+        assert ALTER_GRUND in zeile['grund']
+        assert 'nicht geprüft' not in zeile['grund']
+
+
+def test_der_richtige_grund_ueberlebt_das_fortsetzen(tmp_path):
+    """
+    Fortsetzen ist der Weg, den die Meldung nach zehn Fehlschlägen empfiehlt.
+
+    Beim Fortsetzen wird die Entscheidung aus der Datenbank neu hergeleitet.
+    Ohne Vorkehrung fiele der Kunde dabei auf «lieferte keinen einzigen
+    Treffer» zurück — die Korrektur hielte genau bis zu dem Schritt, zu dem die
+    Anwendung selbst auffordert.
+    """
+    eingabe = eingabe_schreiben(tmp_path, 100)
+    ziel = tmp_path / 'aus'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        gestoppt = Lauf(HaengtImmer(), datenbank, timeout_sekunden=0.2,
+                        arbeiter=1).ausfuehren(eingabe, str(ziel))
+        assert gestoppt['status'] == 'FEHLER'
+        ausgefallene = {k['kunden_nr'] for k in datenbank.kunden_lesen(gestoppt['job_id'])}
+
+    assert ausgefallene, 'die Kunden vor dem Stopp stehen in der Datenbank'
+
+    with Datenbank(tmp_path / 'lauf.sqlite') as datenbank:
+        nachher = Lauf(AntwortetSauber(), datenbank).fortsetzen(
+            gestoppt['job_id'], eingabe, str(ziel))
+
+    assert nachher['status'] == 'FERTIG'
+    df = lies(ziel / OUTPUT_FILES['nicht_moeglich'])
+    wieder_da = df[df['KundenNr'].isin(ausgefallene)]
+    assert len(wieder_da) == len(ausgefallene)
+    for _, zeile in wieder_da.iterrows():
+        assert 'nicht geprüft' in zeile['grund']
+        assert ALTER_GRUND not in zeile['grund']
+
+
+# ============================================================================
 # Netz weg — Fehlertext mit Handlungsanweisung
 # ============================================================================
 
