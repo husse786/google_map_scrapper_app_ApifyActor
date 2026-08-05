@@ -25,18 +25,17 @@ logger = logging.getLogger(__name__)
 
 # Was in der Spalte `qualitaet` steht, nachdem ein Mensch entschieden hat.
 #
-# 02_DATENVERTRAG.md §3 führt eine abschliessende Liste, und diese zwei Werte
-# stehen nicht darin — die Liste beschreibt, was die Fachlogik selbst
-# entscheidet, und eine Prüfmaske gab es beim Schreiben des Vertrags nicht.
-# Warum trotzdem zwei neue Werte und nicht ein vorhandener: Jeder vorhandene
-# `OK (...)`-Wert nennt die Regel, die gegriffen hat — «OK (Strasse)» heisst,
-# dass die Strasse verglichen wurde. Hier hat keine Regel gegriffen, sondern
-# ein Mensch hingesehen. Einen dieser Werte zu setzen, hiesse die Zeile über
-# sich selbst lügen zu lassen; `PRUEFUNG (...)` in der ERP-Datei stehen zu
-# lassen ebenso. Beides ist genau der Fehler, den Phase 7 in vier Runden
-# ausgeräumt hat. Vermerkt in den Findings zu Phase 8.
-GEWAEHLT_QUALITAET = 'OK (geprüft)'
-KEINER_QUALITAET = 'NICHT_MOEGLICH (geprüft)'
+# Beide Werte stehen seit der Korrekturrunde zu Phase 8 in
+# 02_DATENVERTRAG.md §3 und sind damit Vorgabe, nicht Erfindung dieses Moduls.
+#
+# **Ohne Umlaut, und das ist keine Geschmacksfrage.** `qualitaet` ist der
+# Schlüssel, den der ERP-Import liest; ein `ü` darin ist ein
+# Zeichenkodierungsrisiko, das beim Import niemand sucht. Alle siebzehn Werte
+# aus §3 folgen dem — `PRUEFUNG` statt `PRÜFUNG`, `(ID ungueltig)` statt
+# `(ID ungültig)`. Für `grund` gilt das nicht: dort ist freies Deutsch richtig,
+# und dort stehen die Umlaute weiterhin.
+GEWAEHLT_QUALITAET = 'OK (geprueft)'
+KEINER_QUALITAET = 'NICHT_MOEGLICH (geprueft)'
 
 
 def grund_fuer_gewaehlt(kandidat: dict) -> str:

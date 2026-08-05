@@ -664,3 +664,93 @@ def test_ein_auftrag_ohne_pruefaelle_sagt_das(browser):
 
     text = browser.get(f'/pruefung/{job_id}').text
     assert 'keine Fälle zur Prüfung' in text
+
+
+# ============================================================================
+# K1 (v1.1): `qualitaet` bleibt umlautfrei
+#
+# `qualitaet` ist der Schlüssel, den der ERP-Import liest. Ein Umlaut darin ist
+# ein Zeichenkodierungsrisiko, das beim Import niemand sucht. `grund` ist freier
+# Text und trägt seine Umlaute weiterhin.
+# ============================================================================
+
+UMLAUTE = 'äöüÄÖÜß'
+VERTRAG = REPO / 'agent' / '02_DATENVERTRAG.md'
+
+
+def erlaubte_qualitaet_werte() -> list:
+    """Die Werte aus der Tabelle in 02_DATENVERTRAG.md §3."""
+    text = VERTRAG.read_text(encoding='utf-8')
+    abschnitt = text.split('## 3. `qualitaet`')[1].split('\n## 4.')[0]
+    return re.findall(r'^\|\s*`([^`]+)`\s*\|', abschnitt, flags=re.MULTILINE)
+
+
+def test_der_vertrag_fuehrt_die_beiden_werte_der_pruefmaske():
+    """Sie sind Vorgabe, nicht Erfindung dieses Moduls."""
+    erlaubt = erlaubte_qualitaet_werte()
+
+    assert pruefmaske.GEWAEHLT_QUALITAET in erlaubt
+    assert pruefmaske.KEINER_QUALITAET in erlaubt
+
+
+def test_kein_qualitaet_wert_im_vertrag_traegt_einen_umlaut():
+    """Alle siebzehn Werte aus §3, nicht nur die zwei neuen."""
+    for wert in erlaubte_qualitaet_werte():
+        gefunden = [zeichen for zeichen in wert if zeichen in UMLAUTE]
+        assert not gefunden, f'«{wert}» trägt {gefunden}'
+
+
+def test_kein_geschriebener_qualitaet_wert_traegt_einen_umlaut(browser):
+    """
+    Die Gegenprobe am laufenden Betrieb.
+
+    Nicht die Liste im Vertrag, sondern das, was tatsächlich in Datenbank und
+    Ausgabedateien landet — nach einem vollständigen Lauf und nach beiden Arten
+    von Entscheidung.
+    """
+    job_id = lauf_durchfuehren(browser)
+    offen = fall_ids(browser, job_id)
+
+    for lauf, kunde_id in enumerate(offen, start=1):
+        seite = browser.get(f'/pruefung/{job_id}/fall/{kunde_id}')
+        knoepfe = kandidaten_knoepfe(seite.text)
+        browser.post(f'/pruefung/{job_id}/fall/{kunde_id}',
+                     data={'kandidat_id': knoepfe[0] if lauf % 2 else 'keiner'},
+                     follow_redirects=False)
+
+    erlaubt = set(erlaubte_qualitaet_werte())
+    gesehen = set()
+
+    with Datenbank(webapp.DATENBANK) as datenbank:
+        for kunde in datenbank.kunden_lesen(job_id):
+            gesehen.add(kunde['qualitaet'])
+    for name in HAUPTDATEIEN:
+        gesehen.update(lies(ordner_von() / OUTPUT_FILES[name])['qualitaet'])
+    gesehen.discard('')
+
+    assert pruefmaske.GEWAEHLT_QUALITAET in gesehen, 'beide Arten kamen vor'
+    assert pruefmaske.KEINER_QUALITAET in gesehen
+    for wert in gesehen:
+        assert not [z for z in wert if z in UMLAUTE], f'«{wert}» trägt einen Umlaut'
+        assert wert in erlaubt, f'«{wert}» steht nicht in 02_DATENVERTRAG.md §3'
+
+
+def test_der_grund_traegt_seine_umlaute_weiterhin(browser):
+    """
+    Die Regel gilt für `qualitaet`, nicht für den Klartext.
+
+    Sonst wäre aus einer Kodierungsvorsicht eine verstümmelte Sprache geworden.
+    """
+    job_id = lauf_durchfuehren(browser)
+    kunde_id = fall_ids(browser, job_id)[0]
+    seite = browser.get(f'/pruefung/{job_id}/fall/{kunde_id}')
+
+    browser.post(f'/pruefung/{job_id}/fall/{kunde_id}',
+                 data={'kandidat_id': kandidaten_knoepfe(seite.text)[0]},
+                 follow_redirects=False)
+
+    fertig = lies(ordner_von() / OUTPUT_FILES['fertig_fuer_erp'])
+    gruende = [g for g in fertig['grund'] if 'Von Hand' in g]
+    assert gruende, 'der von Hand entschiedene Kunde steht in der ERP-Datei'
+    assert 'geprüft' in gruende[0], 'im Grund bleibt der Umlaut'
+    assert 'ß' not in gruende[0]
