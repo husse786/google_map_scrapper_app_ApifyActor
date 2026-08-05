@@ -9,8 +9,13 @@
 # Zeilen von je 2'513 — die Prüffälle entstehen fast alle woanders. Die
 # Prüfungen bleiben trotzdem: sie kosten nichts und melden echte Eingabefehler.
 #
-# Zwei der drei Prüfungen aus 03_ENTSCHEIDUNGEN.md D **warnen**: der Nutzer
-# entscheidet, ob er trotzdem läuft.
+# Vier Prüfungen: die drei aus 03_ENTSCHEIDUNGEN.md D, dazu seit der
+# Abschlussrunde der unvollständige Suchbegriff. Der stammt nicht aus `03 D`,
+# sondern aus 02_DATENVERTRAG.md §1 — die Regel stand dort von Anfang an, nur
+# setzte sie niemand um: Im alten Ablauf tat das `data_preprocessor.py`, und
+# beim Umbau fiel die Prüfung mit der Datei weg.
+#
+# Drei der vier **warnen**: der Nutzer entscheidet, ob er trotzdem läuft.
 #
 # Abgewiesen wird in zwei Fällen:
 #   - eine fehlende Pflichtspalte (03_ENTSCHEIDUNGEN.md D, geändert nach
@@ -171,6 +176,35 @@ def titelteil(search_string: str) -> str:
     return teile[0].strip() if teile else ''
 
 
+def plz_ort_teil(search_string: str) -> str:
+    """Der dritte kommagetrennte Teil: PLZ und Ort."""
+    teile = str(search_string).split(',')
+    return teile[2].strip() if len(teile) >= 3 else ''
+
+
+def ist_unvollstaendig(search_string: str) -> bool:
+    """
+    Fehlt dem Suchbegriff einer seiner drei Teile?
+
+    02_DATENVERTRAG.md §1: «`SearchString` hat drei kommagetrennte Teile:
+    Titel, Strasse+Nr, PLZ Stadt. Fehlt einer, ist die Zeile unvollständig.»
+
+        "Denner, Hauptstrasse 5, 5620 Bremgarten"  → nein, alle drei da
+        "Denner Bremgarten"                        → ja, es fehlen zwei
+        "Denner, 5620 Bremgarten"                  → ja, der dritte fehlt
+        "Denner, , 5620 Bremgarten"                → ja, der zweite ist leer
+        ""                                         → ja
+
+    Ein Teil zählt als vorhanden, wenn nach dem Trennen etwas übrig bleibt,
+    das nicht nur Leerzeichen ist. Ob **inhaltlich** das Richtige darin steht,
+    prüfen die beiden anderen Prüfungen — eine Kostenstelle im Strassenfeld
+    ist ein vollständiger, aber falscher Suchbegriff.
+    """
+    return not all((titelteil(search_string),
+                    strassenteil(search_string),
+                    plz_ort_teil(search_string)))
+
+
 def ist_kostenstelle(strasse: str) -> bool:
     """
     Steht im Strassenfeld etwas, das keine Strasse ist?
@@ -237,6 +271,7 @@ def pruefe_datei(pfad: str, modus: str = 'A') -> Pruefbericht:
     _pruefe_pflichtspalten(df, rohzeilen, bericht)
 
     if modus == 'A' and 'SearchString' in df.columns:
+        _pruefe_unvollstaendige_suchbegriffe(df, rohzeilen, bericht)
         _pruefe_kostenstellen(df, rohzeilen, bericht)
         _pruefe_kategorietitel(df, rohzeilen, bericht)
 
@@ -299,6 +334,37 @@ def _pruefe_pflichtspalten(df: pd.DataFrame, rohzeilen: list,
                  f'Die erste Zeile muss so aussehen: '
                  f'{KOPFZEILE_JE_MODUS[bericht.modus]}'),
         beispiel_zeile=kopfzeile, zeilennummer=1))
+
+
+def _pruefe_unvollstaendige_suchbegriffe(df: pd.DataFrame, rohzeilen: list,
+                                         bericht: Pruefbericht) -> None:
+    """
+    Zeilen, deren Suchbegriff nicht aus drei Teilen besteht.
+
+    Diese Prüfung stand im alten Ablauf in `data_preprocessor.py`: Es teilte
+    die Eingabe in `_vollstaendig.csv` und `_unvollstaendig.csv` und liess nur
+    die vollständigen Zeilen zur Suche. Beim Umbau fiel sie still weg, weil sie
+    in einer Datei steckte, die ersetzt wurde. Nachgebaut in der Abschlussrunde.
+
+    Sie warnt und blockiert nicht — wie die beiden anderen inhaltlichen
+    Prüfungen und aus demselben Grund: Der Nutzer entscheidet, ob er die Zeilen
+    zuerst korrigiert oder den Lauf trotzdem startet.
+    """
+    treffer = [i for i, wert in enumerate(df['SearchString'])
+               if ist_unvollstaendig(wert)]
+    if not treffer:
+        return
+
+    beispiel, nummer = _beispiel(df, rohzeilen, treffer[0])
+    # «1 Zeile hat», nicht «1 Zeilen haben» — der Satz steht in der Oberfläche.
+    betroffene = ('1 Zeile hat' if len(treffer) == 1
+                  else f'{zahl(len(treffer))} Zeilen haben')
+    bericht.befunde.append(Befund(
+        art='unvollstaendig', schwere=HINWEIS, anzahl=len(treffer),
+        meldung=(f'{betroffene} keinen vollständigen Suchbegriff. Erwartet '
+                 f'werden drei durch Komma getrennte Teile: Name, Strasse mit '
+                 f'Hausnummer, PLZ mit Ort.'),
+        beispiel_zeile=beispiel, zeilennummer=nummer))
 
 
 def _pruefe_kostenstellen(df: pd.DataFrame, rohzeilen: list,

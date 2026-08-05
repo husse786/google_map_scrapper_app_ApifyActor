@@ -62,7 +62,7 @@
       <code>{{ befund.beispiel_zeile }}</code>
     </p>
     {% endif %}
-    {% if befund.art == 'kostenstelle' or befund.art == 'kategorietitel' %}
+    {% if befund.art in ('unvollstaendig', 'kostenstelle', 'kategorietitel') %}
     <p class="warn-folge">
       Diese Kunden landen voraussichtlich in <em>Zur Prüfung</em>. Sie können
       sie vorher im ERP korrigieren oder trotzdem starten.

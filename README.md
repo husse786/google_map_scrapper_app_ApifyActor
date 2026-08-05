@@ -51,8 +51,9 @@ muss laufen, solange jemand die Anwendung benutzt.
      sind freiwillig und dienen nur der Prüfung, ob der Betrieb noch am selben
      Ort steht.
 2. **Datei hochladen** — die Anwendung prüft sie sofort und sagt, was auffällt:
-   fehlende Spalten, Zeilen ohne Strassennamen, Namen, die nur eine Branche
-   sind. Fehlt eine Pflichtspalte, geht es nicht weiter. Alle anderen Hinweise
+   fehlende Spalten, unvollständige Suchbegriffe, Zeilen ohne Strassennamen,
+   Namen, die nur eine Branche sind. Fehlt eine Pflichtspalte, geht es nicht
+   weiter. Alle anderen Hinweise
    sind nur Hinweise; Sie entscheiden, ob Sie trotzdem starten. Hier können Sie
    auch eine Mailadresse hinterlegen.
 3. **Lauf** — Fortschritt, geschätzte Restzeit, Abbruch-Knopf. Das Fenster darf
