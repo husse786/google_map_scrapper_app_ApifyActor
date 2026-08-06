@@ -1,3 +1,22 @@
+> ## ⚠ Historisches Dokument — nicht mehr gültig
+>
+> **Stand: 06.11.2025**, verschoben nach `docs_old/` am 03.08.2026. Beschreibt
+> `data_cleaner.py` vor dem Umbau zur Webapp, samt dem eingebetteten Diagramm
+> `../../diagrams/datacleansing_logik.svg` — für das Diagramm gilt derselbe
+> Vorbehalt.
+>
+> **Was sich geändert hat:** Das Zwischenformat `..._optimierte_daten.csv`
+> entfällt — der Lauf schreibt die drei Ausgabedateien direkt, und jeder Treffer
+> steht einzeln in der Datenbank. Der Strassenvergleich und die Behandlung von
+> Einzeltreffern wurden in Phase 1 geändert (Einzelheiten im Kopf von
+> `../../ALGORITHM_EXPLAINED.md`).
+>
+> **Verbindlich ist heute** `agent/02_DATENVERTRAG.md` für Spalten, Zustände und
+> Datenbank, `agent/03_ENTSCHEIDUNGEN.md` B für die Schwellenwerte, und
+> [`README.md`](../../../README.md) für den Betrieb.
+
+---
+
 # Dokumentation: Modul zur Datenbereinigung (`data_cleaner.py`)
 
 ## 1. Zielsetzung

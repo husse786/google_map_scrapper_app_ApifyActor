@@ -1,3 +1,26 @@
+> ## ⚠ Historisches Dokument — nicht mehr gültig
+>
+> **Stand: 14.04.2026**, verschoben nach `docs_old/` am 03.08.2026. Beschreibt
+> Scoring und Deduplizierung in `data_cleaner.py` vor dem Umbau zur Webapp.
+>
+> **Dieses Dokument ist besonders heikel:** `data_cleaner.py` gibt es weiterhin,
+> und vieles hier stimmt noch. Zwei Regeln wurden aber in Phase 1 geändert — wer
+> den Text ungeprüft liest, hält sie für den heutigen Stand:
+>
+> * Der **Strassenvergleich** nutzt nicht mehr `fuzz.partial_ratio > 90`,
+>   sondern `fuzz.ratio >= 90`. Der alte Vergleich hielt `Dorfstrasse` und
+>   `Oberdorfstrasse` für dieselbe Strasse.
+> * Ein **Einzeltreffer** wird nicht mehr ungeprüft angenommen. Er geht nur nach
+>   ①, wenn der Namensscore ≥ 60 ist oder Strasse und Hausnummer exakt
+>   übereinstimmen.
+>
+> **Verbindlich ist heute** `agent/03_ENTSCHEIDUNGEN.md` Abschnitt B — dort
+> stehen alle Schwellenwerte mit den Messungen, auf denen sie beruhen.
+> `agent/02_DATENVERTRAG.md` regelt Spalten und Zustände,
+> [`README.md`](../README.md) den Betrieb.
+
+---
+
 # ALGORITHM EXPLANATION: Data Cleaning Module
 
 ## How the Scoring & Deduplication Works

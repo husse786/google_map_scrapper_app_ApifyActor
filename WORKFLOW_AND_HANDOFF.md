@@ -1,3 +1,38 @@
+> ## ⚠ Historisches Dokument — nicht mehr gültig
+>
+> **Stand: 14.04.2026.** Diese Anleitung beschreibt den Ablauf **vor dem Umbau
+> zur Webapp**: eine Tkinter-Anwendung, die in drei Schritten von Hand gefahren
+> wurde, mit `data_preprocessor.py`, `apify_wrapper.py`, `csv_processor.py` und
+> `data_consolidator.py`. Diese Dateien gibt es nicht mehr; die beschriebenen
+> Handgriffe ebenso wenig.
+>
+> **Gültig ist heute:** [`README.md`](README.md) für den Betrieb — Installation,
+> Bedienung, die fünf Seiten der Webapp. [`agent/`](agent/) für den Umbau —
+> `02_DATENVERTRAG.md` und `03_ENTSCHEIDUNGEN.md` sind verbindlich,
+> `agent/findings/` hält jede Phase samt Messungen fest.
+>
+> **Warum das Dokument trotzdem bleibt:** Es hält fest, wie die Batches 1 bis 4
+> tatsächlich gelaufen sind, und ist damit die einzige Quelle zu den Daten, die
+> heute im ERP stehen.
+>
+> **Zwei Zahlen darin haben während des Umbaus in die Irre geführt** — beide
+> waren zum Zeitpunkt der Notiz richtig und später falsch, ohne dass das
+> Dokument es sagte:
+>
+> * **«~2 hours for 2,513 customers»** (Zeile 431) wurde zu einer
+>   Laufzeitvorgabe erhoben. Die Messung in Phase 4 hat sie nicht bestätigt;
+>   seither verspricht die Anwendung keine Gesamtdauer, sondern rechnet die
+>   Restzeit aus dem laufenden Auftrag.
+> * **«4,288 rows» ohne Strassentreffer** (Zeilen 341 und 346) wurde zum
+>   «wirkungsvollsten Punkt im ganzen Projekt». Nachgemessen an zwei realen
+>   Batches waren es **14 und 11** Zeilen. Der Grund: Der ERP-Export ist besser
+>   geworden, und die Vorverarbeitung entfernte vom Rest nochmals zwei Drittel.
+>   Einzelheiten in `agent/03_ENTSCHEIDUNGEN.md` D.
+>
+> Wer hier eine Zahl findet und weiterverwenden will, misst sie zuerst nach.
+
+---
+
 # Google Maps Scraper - Complete Workflow & Handoff Guide
 
 **Project:** Enrich Zweifel Pomy Chips customer database with Google Maps data  
