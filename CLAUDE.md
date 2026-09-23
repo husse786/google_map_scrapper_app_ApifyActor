@@ -67,3 +67,20 @@ wechseln, Gewichtungen nicht ändern.
 ## Branch
 
 Arbeite auf `umbau/webapp`. `main` trägt den produktiven Stand.
+
+## Aktueller Stand (23.09.2026)
+
+- **Korrekturrunde 1 fertig** — Branch `claude/brave-goldberg-tbn92c`, noch
+  nicht nach `main` gemergt. Fachlogik nicht angefasst.
+  Einzelheiten: `agent/findings/FINDINGS_KORREKTURRUNDE_1.md`.
+- **Runde 2 offen — zuerst Entscheidung von Husey, dann bauen:**
+  - Einzeltreffer an anderer Strasse landet in ① (`OK (Einzeltreffer)`).
+    Änderung braucht zuerst eine neue Regel in `03 B2`.
+  - «Fortsetzen» geht nur nach Absturz, nicht nach *Gestoppt*/*Abgebrochen*;
+    «Lauf abbrechen» ohne Rückfrage. Braucht eine Änderung der Zustände in
+    `02 §6`.
+- **Vor dem Produktivbetrieb (kein Code):** Speichergrenze des Apify-Kontos
+  prüfen (sonst rund 12 h je 2'513 Kunden), über `scrapeContacts` entscheiden,
+  einen echten Testversand der Mail machen. Modus B bleibt gesperrt (`03 B4`).
+- Beim Start einer neuen Sitzung: zuerst diesen Abschnitt und die Findings
+  lesen, dann nachfragen, ob die Entscheidungen zu Runde 2 gefallen sind.
