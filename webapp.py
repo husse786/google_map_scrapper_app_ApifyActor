@@ -660,8 +660,7 @@ def unerwarteter_fehler(request: Request, fehler: Exception):
         request, 'Da ist etwas schiefgegangen',
         'Die Seite konnte nicht angezeigt werden. Falls ein Auftrag läuft, ist '
         'er davon nicht betroffen — er arbeitet weiter und der Stand ist '
-        'gespeichert.', 'Was genau passiert ist, steht in logs/webapp.log.',
-        code=500)
+        'gespeichert.', code=500)
 
 
 # ==========================================================================

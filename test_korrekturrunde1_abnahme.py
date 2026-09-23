@@ -372,6 +372,17 @@ def test_upload_warnt_vor_doppelten_und_leeren_kundennummern(tmp_path):
     assert 'ß' not in doppelt.meldung + leer.meldung
 
 
+def test_eine_leere_kundennummer_spricht_nicht_von_den_uebrigen(tmp_path):
+    pfad = tmp_path / 'eine.csv'
+    pd.DataFrame([
+        {'SearchString': 'Laden A, Hauptstrasse 1, 5620 Musterdorf', 'PLZ': '5620', 'KundenNr': '900301'},
+        {'SearchString': 'Laden C, Seeweg 2, 5620 Musterdorf', 'PLZ': '5620', 'KundenNr': ''},
+    ]).to_csv(pfad, sep=';', index=False, encoding='utf-8-sig')
+    meldung = pruefe_datei(pfad).befund('kundennr_leer').meldung
+    assert meldung.startswith('1 Zeile hat keine Kundennummer')
+    assert 'übrigen' not in meldung
+
+
 def test_saubere_kundennummern_erzeugen_keinen_hinweis(tmp_path):
     pfad = tmp_path / 'sauber.csv'
     pfad.write_bytes(fixture_kunden())

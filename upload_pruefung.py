@@ -363,14 +363,17 @@ def _pruefe_kundennummern(df: pd.DataFrame, rohzeilen: list,
     leer = [i for i, wert in enumerate(nummern) if not wert.strip()]
     if leer:
         beispiel, nummer = _beispiel(df, rohzeilen, leer[0])
-        betroffene = ('1 Zeile hat' if len(leer) == 1
-                      else f'{zahl(len(leer))} Zeilen haben')
+        if len(leer) == 1:
+            meldung = ('1 Zeile hat keine Kundennummer. Sie lässt sich im ERP '
+                       'nicht zuordnen.')
+        else:
+            meldung = (f'{zahl(len(leer))} Zeilen haben keine Kundennummer. Sie '
+                       f'lassen sich im ERP nicht zuordnen; verarbeitet wird nur '
+                       f'die erste davon, die übrigen erscheinen in keiner '
+                       f'Ergebnisdatei.')
         bericht.befunde.append(Befund(
             art='kundennr_leer', schwere=HINWEIS, anzahl=len(leer),
-            meldung=(f'{betroffene} keine Kundennummer. Solche Zeilen lassen sich '
-                     f'im ERP nicht zuordnen; von ihnen wird nur die erste '
-                     f'verarbeitet, die übrigen erscheinen in keiner '
-                     f'Ergebnisdatei.'),
+            meldung=meldung,
             beispiel_zeile=beispiel, zeilennummer=nummer))
 
     mehrfach = nummern.str.strip().ne('') & nummern.duplicated()
