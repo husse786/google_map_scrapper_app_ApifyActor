@@ -78,7 +78,16 @@ def lauf_durchfuehren(browser, name: str = 'InputData.csv') -> int:
 
 
 def ordner_von(name: str = 'InputData.csv') -> Path:
-    return webapp.ergebnisordner(name)
+    """
+    Der Ergebnisordner des jüngsten Jobs zu dieser Datei.
+
+    Seit der Korrekturrunde 1 hängt der Ordner am Job, nicht nur am Namen.
+    """
+    with Datenbank(webapp.DATENBANK) as datenbank:
+        zeile = datenbank.verbindung.execute(
+            'SELECT * FROM job WHERE dateiname = ? ORDER BY id DESC LIMIT 1',
+            (name,)).fetchone()
+    return webapp.ergebnisordner(dict(zeile))
 
 
 def fall_ids(browser, job_id: int) -> list:

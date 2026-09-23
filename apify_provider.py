@@ -3,9 +3,10 @@
 #
 # Nachfolger von apify_wrapper.py. Neu gegenüber dem alten Wrapper:
 #   - Timeout pro Aufruf, 180 Sekunden (03_ENTSCHEIDUNGEN.md C)
-#   - ein hängender oder abgebrochener Lauf wird wie ein leeres Ergebnis
-#     behandelt: kein Retry, der Kunde landet in Datei ③. Ein Fehler von Apify
-#     dagegen ist kein Ergebnis und beendet den Lauf mit einer Erklärung
+#   - nur ein erfolgreicher Lauf mit leerem Datensatz heisst «nichts
+#     gefunden». Ein Fehler von Apify, ein hängender oder nicht erfolgreich
+#     beendeter Lauf ist kein Ergebnis: kein Retry, er zählt zu den zehn
+#     Fehlschlägen hintereinander (03_ENTSCHEIDUNGEN.md C)
 #   - der Lauf wird bei Zeitüberschreitung auf Apify wirklich abgebrochen,
 #     damit er kein Kontingent weiterverbraucht
 #   - Rückgabe sind Candidate-Objekte, keine Apify-Dictionaries
@@ -105,6 +106,20 @@ UNBEKANNTE_MELDUNG = (
     'verarbeiteten Kunden bleiben erhalten. Was Apify gemeldet hat, steht im '
     'Protokoll im Ordner logs.')
 
+KEIN_CLIENT_MELDUNG = (
+    'Die Verbindung zu Apify liess sich nicht einrichten. Bitte die Einträge '
+    'APIFY_API_TOKEN und ACTOR_ID in der Datei .env prüfen.')
+
+# Für Läufe, die Apify nicht zu Ende gebracht hat (Zeitüberschreitung, Absturz
+# des Actors). Wie beim Timeout im Lauf gilt: keine Antwort ist kein leeres
+# Ergebnis (03_ENTSCHEIDUNGEN.md C, geändert nach Phase 7 v1.2).
+UNVOLLENDET_MELDUNG = (
+    'Apify hat die Suchen mehrfach hintereinander nicht zu Ende gebracht '
+    '(Zeitüberschreitung oder Abbruch auf Seiten von Apify). Der Lauf wurde '
+    'gestoppt, damit keine Kunden fälschlich als «nichts gefunden» gelten. '
+    'Bitte es später noch einmal versuchen — die bereits verarbeiteten Kunden '
+    'bleiben erhalten. Einzelheiten stehen im Protokoll im Ordner logs.')
+
 # Apify-Feldname → Candidate-Feld. Diese Zuordnung ist der Grund, warum es
 # dieses Modul gibt. Kein anderes Modul kennt die linke Spalte.
 FELD_ZUORDNUNG = {
@@ -158,21 +173,24 @@ class ApifyProvider:
         Sucht nach einem Text und liefert die Treffer als Candidate.
 
         **Eine leere Liste heisst: nichts gefunden.** Das ist ein Ergebnis, und
-        der Kunde landet damit in Datei ③ (03_ENTSCHEIDUNGEN.md C). Denselben
-        Weg nimmt ein Aufruf, der in den Timeout gelaufen ist oder den Apify
-        nicht erfolgreich beendet hat — auch dort steht am Ende kein Treffer.
+        der Kunde landet damit in Datei ③. Nur ein Lauf, der mit `SUCCEEDED`
+        endet und einen leeren Datensatz liefert, sagt das.
 
-        **Ein Fehler von Apify ist dagegen kein Ergebnis** und kommt als
-        `QuelleNichtVerfuegbar` heraus, nicht als leere Liste. Die Frage wurde
-        nicht beantwortet; sie stillschweigend als «nichts gefunden» zu
+        **Alles andere ist kein Ergebnis** und kommt als `QuelleNichtVerfuegbar`
+        heraus: ein Fehler von Apify, ein Lauf, der nicht rechtzeitig oder
+        nicht erfolgreich zu Ende kam, ein Datensatz, der sich nicht lesen
+        lässt. Die Frage wurde nicht beantwortet; sie als «nichts gefunden» zu
         behandeln, würde einen ganzen Lauf in Datei ③ schreiben und ihn
         trotzdem `FERTIG` nennen. Bekannte Arten — Kontingent, Token, Rechte —
         stoppen den Lauf sofort, alle anderen erst nach zehn Fehlschlägen
-        hintereinander.
+        hintereinander (03_ENTSCHEIDUNGEN.md C).
+
+        Ausnahme: nach dem Abbruch durch den Nutzer kommt immer die leere
+        Liste. Der Lauf verwirft sie ohnehin.
         """
         if not self.actor:
             logger.error('Apify-Client ist nicht einsatzbereit, Aufruf übersprungen.')
-            return []
+            raise QuelleNichtVerfuegbar(KEIN_CLIENT_MELDUNG)
         if self._abgebrochen:
             return []
 
@@ -190,7 +208,7 @@ class ApifyProvider:
             lauf_id = lauf.get('id') if lauf else None
             if not lauf_id:
                 logger.error(f'Apify lieferte keine Lauf-Nummer für "{search_string}".')
-                return []
+                raise QuelleNichtVerfuegbar(UNBEKANNTE_MELDUNG, endgueltig=False)
 
             with self._sperre:
                 if self._abgebrochen:
@@ -221,18 +239,20 @@ class ApifyProvider:
         if status != 'SUCCEEDED':
             # Häufigster Fall: nach wait_secs rechnet der Actor noch. Abbrechen,
             # sonst verbraucht er weiter Kontingent, obwohl niemand wartet.
-            logger.warning(f'Apify-Lauf für "{search_string}" endete mit Status '
-                           f'{status} statt SUCCEEDED, wird als leeres Ergebnis '
-                           f'behandelt.')
             self._lauf_abbrechen(lauf_id)
-            return []
+            if self._abgebrochen:
+                return []
+            logger.warning(f'Apify-Lauf für "{search_string}" endete mit Status '
+                           f'{status} statt SUCCEEDED. Zählt als Fehlschlag, '
+                           f'nicht als leeres Ergebnis.')
+            raise QuelleNichtVerfuegbar(UNVOLLENDET_MELDUNG, endgueltig=False)
 
         try:
             rohdaten = list(
                 self.client.dataset(fertig['defaultDatasetId']).iterate_items())
         except Exception as fehler:
             logger.error(f'Ergebnisse von Apify nicht lesbar für "{search_string}": {fehler}')
-            return []
+            raise QuelleNichtVerfuegbar(NETZ_MELDUNG, endgueltig=False) from fehler
 
         kandidaten = [self.normalisieren(eintrag) for eintrag in rohdaten]
         kandidaten = [k for k in kandidaten if not k.ist_leer()]

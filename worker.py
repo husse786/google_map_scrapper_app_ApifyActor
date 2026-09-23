@@ -10,6 +10,7 @@
 # Verbindung — dafür steht die Datenbank im WAL-Modus.
 
 import logging
+import shutil
 import threading
 from pathlib import Path
 
@@ -22,6 +23,18 @@ logger = logging.getLogger(__name__)
 # Ein Nutzer, ein Job (03_ENTSCHEIDUNGEN.md C). Die Sperre verhindert, dass zwei
 # Starts im selben Prozess aneinander vorbeilaufen.
 _START_SPERRE = threading.Lock()
+
+# Jobs, an denen in diesem Prozess gerade ein Thread arbeitet. Die Prüfung
+# `self.laeuft` kennt nur den eigenen Worker — ein Doppelklick auf «Auftrag
+# fortsetzen» baut aber einen zweiten Worker für denselben Job. Ohne diese
+# Liste liefen beide, fragten Kunden doppelt ab und stiessen am Ende auf
+# idx_kunde_nr.
+_LAUFENDE_JOBS = set()
+
+
+def auftragsordner(ablage, job_id: int) -> Path:
+    """Der eigene Ordner eines Jobs: `<ablage>/auftrag_<nummer>/`."""
+    return Path(ablage) / f'auftrag_{job_id}'
 
 
 class LaeuftBereits(Exception):
@@ -51,7 +64,8 @@ class Worker:
     # ------------------------------------------------------------------
 
     def starten(self, eingabe_pfad: str, ausgabe_ordner: str = None,
-                email: str = None, kunden_total: int = 0) -> int:
+                email: str = None, kunden_total: int = 0,
+                ablage: str = None) -> int:
         """
         Startet einen neuen Lauf im Hintergrund und kehrt sofort zurück.
 
@@ -61,6 +75,12 @@ class Worker:
         `kunden_total` ist die Zahl, die der Aufrufer schon kennt — die
         Statusanzeige soll nicht eine Sekunde lang „0 von 0" zeigen. Der Lauf
         setzt sie gleich darauf auf den verbindlichen Wert.
+
+        `ablage`: ist sie angegeben, wird die Eingabedatei in den eigenen
+        Ordner des Jobs verschoben (`<ablage>/auftrag_<nummer>/`). Die
+        Ergebnisdateien entstehen neben der Eingabe (02_DATENVERTRAG.md §2),
+        also ebenfalls dort. Zwei Läufe mit gleichem Dateinamen überschreiben
+        sich damit nicht mehr gegenseitig.
         """
         with _START_SPERRE:
             self._pruefen_ob_frei()
@@ -72,8 +92,27 @@ class Worker:
                                                kunden_total=kunden_total,
                                                email=email)
                 datenbank.status_setzen(job_id, 'LAEUFT')
+                if ablage is not None:
+                    try:
+                        eingabe_pfad = self._in_auftragsordner(
+                            eingabe_pfad, ablage, job_id)
+                    except OSError as fehler:
+                        logger.error(f'Eingabe für Job {job_id} nicht ablegbar: {fehler}')
+                        datenbank.status_setzen(
+                            job_id, 'FEHLER',
+                            'Die hochgeladene Datei liess sich nicht ablegen. '
+                            'Bitte die Datei noch einmal hochladen.')
+                        raise
             self._starten(job_id, eingabe_pfad, ausgabe_ordner)
         return job_id
+
+    @staticmethod
+    def _in_auftragsordner(eingabe_pfad: str, ablage: str, job_id: int) -> str:
+        ziel_ordner = auftragsordner(ablage, job_id)
+        ziel_ordner.mkdir(parents=True, exist_ok=True)
+        ziel = ziel_ordner / Path(eingabe_pfad).name
+        shutil.move(str(eingabe_pfad), str(ziel))
+        return str(ziel)
 
     def fortsetzen(self, job_id: int, eingabe_pfad: str,
                    ausgabe_ordner: str = None) -> int:
@@ -82,6 +121,10 @@ class Worker:
             if self.laeuft:
                 raise LaeuftBereits(
                     f'Es läuft bereits ein Auftrag (Nummer {self.job_id}). '
+                    f'Bitte warten oder ihn abbrechen.')
+            if job_id in _LAUFENDE_JOBS:
+                raise LaeuftBereits(
+                    f'Der Auftrag Nummer {job_id} wird bereits fortgesetzt. '
                     f'Bitte warten oder ihn abbrechen.')
             self._starten(job_id, eingabe_pfad, ausgabe_ordner)
         return job_id
@@ -106,6 +149,7 @@ class Worker:
         self.job_id = job_id
         self.ergebnis = None
         self.fehler = None
+        _LAUFENDE_JOBS.add(job_id)
         self._thread = threading.Thread(
             target=self._arbeiten, args=(job_id, eingabe_pfad, ausgabe_ordner),
             name=f'lauf-{job_id}', daemon=True)
@@ -130,6 +174,8 @@ class Worker:
         finally:
             self._bescheid_geben(datenbank, job_id)
             datenbank.schliessen()
+            with _START_SPERRE:
+                _LAUFENDE_JOBS.discard(job_id)
 
     def _bescheid_geben(self, datenbank: Datenbank, job_id: int) -> None:
         """

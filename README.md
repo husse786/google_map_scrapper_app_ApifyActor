@@ -30,7 +30,11 @@ source venv/bin/activate
 python webapp.py
 ```
 
+Unter Windows lautet die erste Zeile `venv\Scripts\activate`.
+
 Dann im Browser `http://localhost:8000` öffnen. Beenden mit `Strg+C`.
+Die Anwendung sucht damit echt bei Apify — dafür braucht es die Zugangsdaten
+aus Schritt 5 der Einrichtung.
 
 Damit auch andere im Firmennetz zugreifen können:
 
@@ -85,7 +89,15 @@ muss laufen, solange jemand die Anwendung benutzt.
 ### Die CSV-Datei
 
 Semikolon als Trennzeichen, erste Zeile die Spaltennamen. In Excel:
-*Speichern unter → CSV UTF-8 (durch Trennzeichen getrennt)*.
+*Speichern unter → CSV UTF-8 (durch Trennzeichen getrennt)*. Die Variante
+ohne «UTF-8» lässt sich nicht lesen.
+
+Jede Kundennummer nur einmal, keine leeren. Die Prüfung beim Hochladen weist
+darauf hin: verarbeitet wird je Kundennummer nur die erste Zeile.
+
+`fertig_fuer_erp.csv` direkt ins ERP importieren, **nicht vorher in Excel
+öffnen und speichern**: Excel rundet lange Zahlen wie die Google-`cid` und
+entfernt das `+` vor Telefonnummern.
 
 Höchstens 10'000 Zeilen pro Datei. Grössere Dateien bitte aufteilen.
 
@@ -147,6 +159,8 @@ Zuerst die Vorlage kopieren:
 cp config.template.py config.py
 ```
 
+Unter Windows: `copy config.template.py config.py`.
+
 Dann eine Datei namens `.env` im Projektordner anlegen, mit diesem Inhalt:
 
 ```
@@ -166,25 +180,31 @@ SMTP_ABSENDER=anreicherung@firma.ch
 SMTP_PORT=25
 SMTP_BENUTZER=
 SMTP_PASSWORT=
+SMTP_TLS=ja
 ```
 
 * **`GOOGLE_API_KEY`** braucht nur, wer die Art *Auffrischen* benutzt.
 * **SMTP** braucht nur, wer eine Mail bekommen will. Fehlt es, läuft alles
   normal weiter; ins Protokoll wird geschrieben, was verschickt worden wäre.
+* **`SMTP_TLS`** steht auf `ja` (verschlüsselt). Kann der Mailserver der Firma
+  das nicht, `SMTP_TLS=nein` setzen — sonst kommt keine Mail an, und der Grund
+  steht nur im Protokoll. Nach der Einrichtung einmal einen Probelauf mit
+  Mailadresse machen.
 
 ### 6. Ausprobieren, ohne etwas zu verbrauchen
 
 Die Anwendung kann mit vorbereiteten Antworten laufen. Dabei wird nichts bei
-Apify abgefragt und nichts abgerechnet:
+Apify abgefragt und nichts abgerechnet. Jede Seite zeigt dann den Hinweis
+*Probebetrieb*:
 
 ```bash
 python webapp.py --antworten agent/testdaten/fixture_optimierte_daten.csv
 ```
 
-Für den echten Betrieb:
+Für den echten Betrieb genügt:
 
 ```bash
-python webapp.py --quelle echt
+python webapp.py
 ```
 
 ### 7. Wenn andere im Firmennetz zugreifen sollen
@@ -196,6 +216,10 @@ falls sie fehlen, genügt eine kurze Anfrage an die ICT.
 Den Rechnernamen statt der IP-Adresse verwenden — sonst bricht der Link nach
 jedem Neustart.
 
+Die Anwendung hat keine Anmeldung. Wer sie erreicht, kann alle
+Kundendaten herunterladen und Läufe starten, die Apify-Guthaben kosten. Die
+Freigabe von Port 8000 deshalb auf die Rechner beschränken, die sie brauchen.
+
 ---
 
 ## Wenn etwas nicht klappt
@@ -206,6 +230,7 @@ jedem Neustart.
 | «Der Apify-Token wird nicht akzeptiert» | Eintrag `APIFY_API_TOKEN` in `.env` prüfen, notfalls im Apify-Konto einen neuen erzeugen. |
 | «Apify ist nicht erreichbar» | Internetverbindung prüfen, dann fortsetzen. Ein kurzer Aussetzer stoppt den Lauf nicht; erst zehn Fehlschläge hintereinander tun es. |
 | «In der Datei fehlt die Spalte …» | Die erste Zeile der CSV muss die Spaltennamen enthalten, getrennt mit Semikolon. |
+| «Die Zugangsdaten fehlen» | `config.py` und `.env` wie in Schritt 5 anlegen, dann das Programm neu starten. |
 | «Es liegt noch ein unerledigter Auftrag vor» | Es läuft immer nur ein Auftrag. Den offenen fortsetzen oder abbrechen. |
 | Die Seite lässt sich nicht öffnen | Läuft `python webapp.py` noch? Im Terminal nachsehen. |
 | Etwas anderes | `logs/webapp.log` und `logs/bereinigung.log` enthalten die technischen Einzelheiten. |
@@ -263,7 +288,7 @@ config.py             Zugangsdaten (nicht in der Versionsverwaltung)
 Wo welche Daten liegen:
 
 ```
-laufdaten/uploads/        hochgeladene Dateien und ihre Ergebnisordner
+laufdaten/uploads/auftrag_<Nummer>/   je Auftrag: Eingabedatei und Ergebnisordner
 laufdaten/laeufe.sqlite   alle Läufe, Kunden und Kandidaten
 logs/                     Protokolle
 ```

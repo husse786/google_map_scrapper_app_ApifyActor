@@ -18,7 +18,7 @@ from data_cleaner import OUTPUT_FILES, DataCleaner
 from db import ENTSCHEIDE, ERGEBNISSE, Datenbank
 from fake_provider import FakeProvider
 from pipeline import Lauf
-from place_provider import Candidate
+from place_provider import Candidate, QuelleNichtVerfuegbar
 
 REPO = Path(__file__).parent
 FIXTURE = REPO / 'agent' / 'testdaten' / 'fixture_optimierte_daten.csv'
@@ -512,8 +512,14 @@ def test_apify_actor_input_enthaelt_die_produktiven_werte():
     assert STANDARD_ACTOR_INPUT['countryCode'] == 'ch'
 
 
-def test_apify_ohne_erfolgreichen_lauf_liefert_nichts_und_bricht_ab():
-    """Läuft der Actor nach dem Timeout noch, wird er abgebrochen statt bezahlt."""
+def test_apify_ohne_erfolgreichen_lauf_bricht_ab_und_meldet_fehlschlag():
+    """
+    Läuft der Actor nach dem Timeout noch, wird er abgebrochen statt bezahlt.
+
+    Geändert in der Korrekturrunde 1: früher kam danach die leere Liste, also
+    «nichts gefunden». Seit 03_ENTSCHEIDUNGEN.md C (Phase 7 v1.2) ist eine
+    Zeitüberschreitung keine Antwort — sie zählt zu den zehn Fehlschlägen.
+    """
     abgebrochen = []
 
     class LaufStub:
@@ -539,8 +545,9 @@ def test_apify_ohne_erfolgreichen_lauf_liefert_nichts_und_bricht_ab():
     provider.actor = ActorStub()
     provider.client = ClientStub()
 
-    assert provider.fetch_by_text('Muster Laden, Hauptstrasse 1, 5620 Musterdorf',
-                                  '5620') == []
+    with pytest.raises(QuelleNichtVerfuegbar) as gemeldet:
+        provider.fetch_by_text('Muster Laden, Hauptstrasse 1, 5620 Musterdorf', '5620')
+    assert gemeldet.value.endgueltig is False
     assert abgebrochen == [True]
 
 

@@ -30,6 +30,13 @@
   </header>
 
   <main class="inhalt">
+    {% if testbetrieb() %}
+    <p class="warnbox" role="status">
+      <strong>Probebetrieb:</strong> Die Treffer kommen aus einer Datei mit
+      festen Antworten, nicht von Google. Ergebnisse aus diesem Betrieb
+      gehören nicht ins ERP.
+    </p>
+    {% endif %}
     {% block inhalt %}{% endblock %}
   </main>
 </body>

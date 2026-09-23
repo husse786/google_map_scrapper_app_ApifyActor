@@ -34,7 +34,7 @@ from data_cleaner import OUTPUT_FILES
 from db import Datenbank
 from fake_provider import FakeProvider
 from upload_pruefung import pruefe_datei, zahl
-from worker import LaeuftBereits, Worker, offener_lauf
+from worker import LaeuftBereits, Worker, auftragsordner, offener_lauf
 
 WURZEL = Path(__file__).resolve().parent
 LAUFDATEN = WURZEL / 'laufdaten'
@@ -48,6 +48,9 @@ app = FastAPI(title='Kundendaten anreichern', docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=WURZEL / 'static'), name='static')
 vorlagen = Jinja2Templates(directory=WURZEL / 'templates')
 vorlagen.env.globals['zahl'] = zahl
+# Feste Antworten statt echter Suche: jede Seite sagt es, damit niemand einen
+# Probelauf für ein Ergebnis hält.
+vorlagen.env.globals['testbetrieb'] = lambda: zustand['provider'] is not None
 
 # Ein Nutzer, ein Auftrag (03_ENTSCHEIDUNGEN.md C).
 zustand = {
@@ -210,6 +213,50 @@ def provider_holen(modus: str = 'A'):
     return apify_provider.aus_konfiguration()
 
 
+class ZugangFehlt(Exception):
+    """Die Datenquelle lässt sich nicht einrichten. Die Meldung ist für den Nutzer."""
+
+
+def provider_oder_hinweis(modus: str):
+    """
+    Wie `provider_holen`, aber mit einer Meldung, die sagt, was fehlt.
+
+    Ohne das landete eine fehlende `.env` auf der allgemeinen Fehlerseite, die
+    von einem laufenden Auftrag spricht — obwohl gar keiner gestartet wurde.
+    """
+    try:
+        return provider_holen(modus)
+    except ModuleNotFoundError as fehler:
+        if fehler.name != 'config':
+            raise
+        logger.error('config.py fehlt')
+        raise ZugangFehlt('Die Datei config.py fehlt im Programmordner. Bitte wie '
+                          'im README beschrieben config.template.py nach '
+                          'config.py kopieren.') from fehler
+    except ValueError as fehler:
+        logger.error(f'Zugangsdaten unvollständig: {fehler}')
+        raise ZugangFehlt(str(fehler)) from fehler
+
+
+def eingabedatei(job: dict) -> Path:
+    """
+    Wo die Eingabedatei eines Jobs liegt.
+
+    Seit der Korrekturrunde 1 im eigenen Ordner des Jobs. Ältere Jobs haben
+    ihre Datei noch direkt im Upload-Ordner — sie bleiben so erreichbar.
+    """
+    eigene = auftragsordner(UPLOADS, job['id']) / job['dateiname']
+    if eigene.exists():
+        return eigene
+    return UPLOADS / job['dateiname']
+
+
+def zugang_fehlt_seite(request: Request, hinweis: ZugangFehlt) -> HTMLResponse:
+    return fehlerseite(request, 'Die Zugangsdaten fehlen', str(hinweis),
+                       'Es wurde kein Auftrag gestartet. Nach der Korrektur das '
+                       'Programm neu starten.', code=500)
+
+
 # ==========================================================================
 # Seite 1 — Art wählen
 # ==========================================================================
@@ -248,8 +295,12 @@ async def datei_hochladen(request: Request, datei: UploadFile = None,
         return fehlerseite(request, 'Es wurde keine Datei ausgewählt',
                            'Bitte eine CSV-Datei auswählen und erneut hochladen.')
 
-    UPLOADS.mkdir(parents=True, exist_ok=True)
-    ziel = UPLOADS / Path(datei.filename).name
+    # Zuerst in den Eingang. Erst beim Start zieht die Datei in den Ordner
+    # ihres Jobs — so überschreibt ein neuer Upload nie die Eingabe oder die
+    # Ergebnisse eines anderen Auftrags, auch nicht bei gleichem Dateinamen.
+    eingang = UPLOADS / 'eingang'
+    eingang.mkdir(parents=True, exist_ok=True)
+    ziel = eingang / Path(datei.filename).name
     try:
         with ziel.open('wb') as ausgabe:
             shutil.copyfileobj(datei.file, ausgabe)
@@ -264,7 +315,8 @@ async def datei_hochladen(request: Request, datei: UploadFile = None,
             request, 'Die Datei konnte nicht gelesen werden',
             f'«{ziel.name}» liess sich nicht als CSV-Datei öffnen.',
             'Erwartet wird eine CSV-Datei mit Semikolon als Trennzeichen. '
-            'In Excel: Speichern unter → CSV.')
+            'In Excel: Speichern unter → «CSV UTF-8 (durch Trennzeichen '
+            'getrennt)». Die Variante ohne «UTF-8» funktioniert nicht.')
 
     zustand['hochgeladen'] = ziel if bericht.start_moeglich else None
     zustand['kunden'] = bericht.kunden
@@ -280,32 +332,50 @@ async def datei_hochladen(request: Request, datei: UploadFile = None,
 @app.post('/starten')
 def lauf_starten(request: Request, email: str = Form('')):
     zustand['email'] = (email or '').strip()
+
+    # Doppelklick auf «Lauf starten»: der erste Klick hat den Lauf gestartet,
+    # der zweite zeigt ihn an, statt eine Fehlerseite zu bringen.
+    laufend = zustand['worker']
+    if laufend and laufend.laeuft:
+        return RedirectResponse(f'/lauf/{laufend.job_id}', status_code=303)
+
     quelle = zustand['hochgeladen']
     if not quelle or not Path(quelle).exists():
         return fehlerseite(request, 'Die Datei ist nicht mehr da',
                            'Bitte die Datei noch einmal hochladen.')
 
-    worker = Worker(provider_holen(zustand['modus']), DATENBANK,
-                    modus=zustand['modus'])
+    try:
+        provider = provider_oder_hinweis(zustand['modus'])
+    except ZugangFehlt as hinweis:
+        return zugang_fehlt_seite(request, hinweis)
+
+    worker = Worker(provider, DATENBANK, modus=zustand['modus'])
     try:
         job_id = worker.starten(quelle, email=zustand['email'] or None,
-                                kunden_total=zustand['kunden'])
+                                kunden_total=zustand['kunden'], ablage=UPLOADS)
     except LaeuftBereits as hinweis:
         return fehlerseite(request, 'Es läuft bereits ein Auftrag', str(hinweis),
                            'Bitte den laufenden Auftrag abwarten oder abbrechen.',
                            code=409)
 
     zustand['worker'] = worker
+    zustand['hochgeladen'] = None   # die Datei liegt jetzt im Ordner des Jobs
     return RedirectResponse(f'/lauf/{job_id}', status_code=303)
 
 
 @app.post('/fortsetzen')
 def lauf_fortsetzen(request: Request):
+    # Doppelklick oder zweites Fenster: der Auftrag wird schon fortgesetzt.
+    # Ein zweiter Worker würde dieselben Kunden noch einmal abfragen.
+    laufend = zustand['worker']
+    if laufend and laufend.laeuft:
+        return RedirectResponse(f'/lauf/{laufend.job_id}', status_code=303)
+
     offen = offener_lauf(DATENBANK)
     if not offen:
         return RedirectResponse('/', status_code=303)
 
-    quelle = UPLOADS / offen['dateiname']
+    quelle = eingabedatei(offen)
     if not quelle.exists():
         return fehlerseite(
             request, 'Die Datei zum Auftrag fehlt',
@@ -313,14 +383,16 @@ def lauf_fortsetzen(request: Request):
             f'Sie liegt nicht mehr im Ordner der hochgeladenen Dateien.',
             'Bitte dieselbe Datei erneut hochladen und einen neuen Lauf starten.')
 
-    worker = Worker(provider_holen(offen['modus']), DATENBANK,
-                    modus=offen['modus'])
+    try:
+        provider = provider_oder_hinweis(offen['modus'])
+    except ZugangFehlt as hinweis:
+        return zugang_fehlt_seite(request, hinweis)
+
+    worker = Worker(provider, DATENBANK, modus=offen['modus'])
     try:
         worker.fortsetzen(offen['id'], quelle)
-    except LaeuftBereits as hinweis:
-        return fehlerseite(request, 'Es läuft bereits ein Auftrag', str(hinweis),
-                           'Bitte den laufenden Auftrag abwarten oder abbrechen.',
-                           code=409)
+    except LaeuftBereits:
+        return RedirectResponse(f'/lauf/{offen["id"]}', status_code=303)
 
     zustand['worker'] = worker
     return RedirectResponse(f'/lauf/{offen["id"]}', status_code=303)
@@ -380,7 +452,7 @@ def ergebnis_zeigen(request: Request, job_id: int):
                            f'Ein Auftrag mit der Nummer {job_id} ist nicht '
                            f'gespeichert.', code=404)
 
-    ordner = ergebnisordner(job['dateiname'])
+    ordner = ergebnisordner(job)
     vollstaendig = job['status'] == 'FERTIG' and ordner.exists()
 
     if vollstaendig:
@@ -432,7 +504,7 @@ def datei_herunterladen(request: Request, job_id: int, schluessel: str):
                            f'Ein Auftrag mit der Nummer {job_id} ist nicht '
                            f'gespeichert.', code=404)
 
-    pfad = ergebnisordner(job['dateiname']) / OUTPUT_FILES[schluessel]
+    pfad = ergebnisordner(job) / OUTPUT_FILES[schluessel]
     if not pfad.exists():
         return fehlerseite(request, 'Die Datei liegt nicht bereit',
                            'Zu diesem Auftrag wurde noch keine Ergebnisdatei '
@@ -444,9 +516,14 @@ def datei_herunterladen(request: Request, job_id: int, schluessel: str):
                         filename=OUTPUT_FILES[schluessel])
 
 
-def ergebnisordner(dateiname: str) -> Path:
-    """<eingabedateiname>_ergebnis neben der hochgeladenen Datei (§2)."""
-    return UPLOADS / f'{Path(dateiname).stem}_ergebnis'
+def ergebnisordner(job: dict) -> Path:
+    """
+    <eingabedateiname>_ergebnis neben der Eingabedatei des Jobs (§2).
+
+    Hängt am Job, nicht nur am Dateinamen: zwei Uploads namens `kunden.csv`
+    haben je ihren eigenen Ordner.
+    """
+    return eingabedatei(job).parent / f'{Path(job["dateiname"]).stem}_ergebnis'
 
 
 # ==========================================================================
@@ -552,7 +629,7 @@ def pruefung_entscheiden(request: Request, job_id: int, kunde_id: int,
                                str(hinweis))
 
         pruefmaske.dateien_neu_schreiben(
-            datenbank, job_id, str(ergebnisordner(job['dateiname'])))
+            datenbank, job_id, str(ergebnisordner(job)))
         weiter = pruefmaske.naechster_offener(datenbank, job_id,
                                               nach_kunde_id=kunde_id)
 
@@ -581,9 +658,10 @@ def unerwarteter_fehler(request: Request, fehler: Exception):
     logger.exception('Unerwarteter Fehler')
     return fehlerseite(
         request, 'Da ist etwas schiefgegangen',
-        'Die Seite konnte nicht angezeigt werden. Ihr laufender Auftrag ist '
-        'davon nicht betroffen — er arbeitet weiter und der Stand ist '
-        'gespeichert.', code=500)
+        'Die Seite konnte nicht angezeigt werden. Falls ein Auftrag läuft, ist '
+        'er davon nicht betroffen — er arbeitet weiter und der Stand ist '
+        'gespeichert.', 'Was genau passiert ist, steht in logs/webapp.log.',
+        code=500)
 
 
 # ==========================================================================
@@ -646,16 +724,29 @@ def provider_einrichten(antworten: str = None, quelle: str = 'fake'):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description='Startet die Weboberfläche für die Anreicherung.')
-    parser.add_argument('--quelle', choices=('fake', 'echt'), default='fake',
+    parser.add_argument('--quelle', choices=('fake', 'echt'), default=None,
                         help='woher die Treffer kommen: «echt» nutzt Apify für '
                              'die Erstanreicherung und Google für das '
-                             'Auffrischen (Standard: feste Antworten)')
+                             'Auffrischen. Standard: echt, ausser es ist eine '
+                             'Antwortdatei angegeben')
     parser.add_argument('--antworten', default=None,
-                        help='Antwortdatei für --quelle fake')
+                        help='Antwortdatei mit festen Antworten (Probebetrieb)')
     parser.add_argument('--offen', action='store_true',
                         help='auch für andere Rechner im Firmennetz erreichbar')
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args(argv)
+
+    # Der normale Start ist der echte Betrieb. Früher war es der Probebetrieb
+    # mit leeren Antworten — ein Lauf schrieb dann jeden Kunden nach ③ und
+    # nannte sich «Fertig».
+    if args.quelle is None:
+        args.quelle = 'fake' if args.antworten else 'echt'
+    if args.quelle == 'fake' and not args.antworten:
+        print('Für den Probebetrieb fehlt die Antwortdatei, zum Beispiel:')
+        print('  python webapp.py --antworten '
+              'agent/testdaten/fixture_optimierte_daten.csv')
+        print('Für den echten Betrieb genügt: python webapp.py')
+        return 1
 
     logging_einrichten()
     provider_einrichten(args.antworten, args.quelle)

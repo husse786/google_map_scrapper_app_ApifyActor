@@ -16,7 +16,11 @@
 # beim Umbau fiel die Prüfung mit der Datei weg. Die Datei ist seit der
 # Abschlussrunde gelöscht — sie liegt in der Git-Historie, ihre Regel hier.
 #
-# Drei der vier **warnen**: der Nutzer entscheidet, ob er trotzdem läuft.
+# Seit der Korrekturrunde 1 dazu: leere und doppelte Kundennummern — solche
+# Zeilen fielen bisher ohne Hinweis aus allen drei Ergebnisdateien.
+#
+# Drei der vier **warnen**, ebenso die Kundennummern-Prüfung: der Nutzer
+# entscheidet, ob er trotzdem läuft.
 #
 # Abgewiesen wird in zwei Fällen:
 #   - eine fehlende Pflichtspalte (03_ENTSCHEIDUNGEN.md D, geändert nach
@@ -270,6 +274,8 @@ def pruefe_datei(pfad: str, modus: str = 'A') -> Pruefbericht:
 
     _pruefe_zeilenzahl(df, bericht)
     _pruefe_pflichtspalten(df, rohzeilen, bericht)
+    if 'KundenNr' in df.columns:
+        _pruefe_kundennummern(df, rohzeilen, bericht)
 
     if modus == 'A' and 'SearchString' in df.columns:
         _pruefe_unvollstaendige_suchbegriffe(df, rohzeilen, bericht)
@@ -335,6 +341,50 @@ def _pruefe_pflichtspalten(df: pd.DataFrame, rohzeilen: list,
                  f'Die erste Zeile muss so aussehen: '
                  f'{KOPFZEILE_JE_MODUS[bericht.modus]}'),
         beispiel_zeile=kopfzeile, zeilennummer=1))
+
+
+def _pruefe_kundennummern(df: pd.DataFrame, rohzeilen: list,
+                          bericht: Pruefbericht) -> None:
+    """
+    Leere und mehrfach vorkommende Kundennummern.
+
+    Der Lauf verarbeitet je Kundennummer genau eine Zeile — die erste
+    (`pipeline.py`, `_kunden_lesen`). Weitere Zeilen mit derselben Nummer, und
+    alle Zeilen ohne Nummer ausser der ersten, stehen danach in keiner der drei
+    Dateien. Bisher erfuhr das nur, wer die Kommandozeile benutzte. Die
+    Prüfung warnt und blockiert nicht, wie die übrigen inhaltlichen Prüfungen.
+
+        900301 zweimal, mit zwei Adressen → «1 Zeile hat eine Kundennummer,
+                                             die schon weiter oben steht»
+    """
+    # Genau so, wie der Lauf gruppiert: nach dem Wert in der Zelle.
+    nummern = df['KundenNr'].astype(str)
+
+    leer = [i for i, wert in enumerate(nummern) if not wert.strip()]
+    if leer:
+        beispiel, nummer = _beispiel(df, rohzeilen, leer[0])
+        betroffene = ('1 Zeile hat' if len(leer) == 1
+                      else f'{zahl(len(leer))} Zeilen haben')
+        bericht.befunde.append(Befund(
+            art='kundennr_leer', schwere=HINWEIS, anzahl=len(leer),
+            meldung=(f'{betroffene} keine Kundennummer. Solche Zeilen lassen sich '
+                     f'im ERP nicht zuordnen; von ihnen wird nur die erste '
+                     f'verarbeitet, die übrigen erscheinen in keiner '
+                     f'Ergebnisdatei.'),
+            beispiel_zeile=beispiel, zeilennummer=nummer))
+
+    mehrfach = nummern.str.strip().ne('') & nummern.duplicated()
+    doppelt = [i for i, ja in enumerate(mehrfach) if ja]
+    if doppelt:
+        beispiel, nummer = _beispiel(df, rohzeilen, doppelt[0])
+        betroffene = ('1 Zeile hat' if len(doppelt) == 1
+                      else f'{zahl(len(doppelt))} Zeilen haben')
+        bericht.befunde.append(Befund(
+            art='kundennr_doppelt', schwere=HINWEIS, anzahl=len(doppelt),
+            meldung=(f'{betroffene} eine Kundennummer, die schon weiter oben '
+                     f'steht. Verarbeitet wird je Kundennummer nur die erste '
+                     f'Zeile; die übrigen erscheinen in keiner Ergebnisdatei.'),
+            beispiel_zeile=beispiel, zeilennummer=nummer))
 
 
 def _pruefe_unvollstaendige_suchbegriffe(df: pd.DataFrame, rohzeilen: list,

@@ -106,6 +106,9 @@
   // gibt. Fällt das Skript aus, bleibt das Formular vollständig bedienbar.
   document.addEventListener('keydown', function (ereignis) {
     if (ereignis.ctrlKey || ereignis.metaKey || ereignis.altKey) return;
+    // Eine gehaltene Taste wiederholt sich. Ohne diese Zeile entschiede sie
+    // auch den nächsten Fall, bevor ihn jemand gesehen hat.
+    if (ereignis.repeat) return;
     var knopf = document.querySelector(
       '#entscheidung [data-taste="' + ereignis.key + '"]');
     if (!knopf) return;

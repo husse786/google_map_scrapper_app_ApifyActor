@@ -109,7 +109,8 @@ def _eingabe_pruefen(eingabe: Path, pflichtspalten: tuple):
         df = pd.read_csv(eingabe, sep=';', encoding='utf-8-sig', dtype=str).fillna('')
     except Exception:
         print(f'Die Datei "{eingabe.name}" konnte nicht gelesen werden.')
-        print('Erwartet wird eine CSV-Datei mit Semikolon als Trennzeichen.')
+        print('Erwartet wird eine CSV-Datei mit Semikolon als Trennzeichen, '
+              'gespeichert als «CSV UTF-8».')
         return None
 
     fehlend = [spalte for spalte in pflichtspalten if spalte not in df.columns]
@@ -164,7 +165,8 @@ def pruefen(args) -> int:
     except Exception:
         logging.getLogger(__name__).exception('Prüfung abgebrochen')
         print(f'Die Datei "{args.eingabe.name}" konnte nicht gelesen werden.')
-        print('Erwartet wird eine CSV-Datei mit Semikolon als Trennzeichen.')
+        print('Erwartet wird eine CSV-Datei mit Semikolon als Trennzeichen, '
+              'gespeichert als «CSV UTF-8».')
         return 1
 
     print(bericht.als_text())
@@ -264,12 +266,26 @@ def _auf_lauf_warten(worker: Worker, job_id: int, args) -> int:
         return 1
 
     ergebnis = worker.ergebnis or {}
+    # Der Stand aus der Datenbank: dort wird nach jedem Kunden gezählt. Der
+    # Wert im Ergebnis kann bei einem vorzeitigen Ende hinterherhinken.
+    stand = worker.fortschritt() or {}
+    erledigt = stand.get('kunden_erledigt', ergebnis.get('kunden_erledigt', 0))
+    total = stand.get('kunden_total', ergebnis.get('kunden_total', 0))
+
     if ergebnis.get('status') == 'ABGEBROCHEN':
         print()
-        print(f'Abgebrochen nach {_zahl(ergebnis["kunden_erledigt"])} von '
-              f'{_zahl(ergebnis["kunden_total"])} Kunden.')
-        print('Die bereits verarbeiteten Kunden sind gespeichert. Fortsetzen mit:')
-        print(f'  python cli.py fortsetzen {args.eingabe}')
+        print(f'Abgebrochen nach {_zahl(erledigt)} von {_zahl(total)} Kunden.')
+        print('Die bereits verarbeiteten Kunden sind in der Datenbank gespeichert.')
+        print('Ein abgebrochener Lauf lässt sich nicht fortsetzen; ein neuer Lauf '
+              'fragt alle Kunden neu ab.')
+        return 1
+
+    if ergebnis.get('status') == 'FEHLER':
+        print()
+        print('Der Lauf musste gestoppt werden.')
+        print(ergebnis.get('fehlermeldung') or '')
+        print(f'{_zahl(erledigt)} von {_zahl(total)} Kunden sind in der '
+              f'Datenbank gespeichert. Ergebnisdateien wurden keine geschrieben.')
         return 1
 
     if ergebnis.get('doppelte_kundennummern'):
